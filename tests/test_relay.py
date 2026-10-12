@@ -217,3 +217,18 @@ class CliTest(TempDirTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HelpStringsTest(unittest.TestCase):
+    def test_all_help_strings_format(self):
+        # Python 3.15+ 는 add_parser/add_argument 시점에 help 의 % 서식을 검사한다.
+        import argparse
+        parser = cli.build_parser()
+        for action in parser._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                for choice in action._choices_actions:
+                    if choice.help:
+                        choice.help % {"prog": "relay"}
+                for sub in action.choices.values():
+                    sub.format_help()
+        parser.format_help()

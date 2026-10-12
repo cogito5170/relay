@@ -415,7 +415,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--dry-run", action="store_true", help="어떤 러너가 쓰일지만 출력")
     s.set_defaults(func=cmd_run)
 
-    s = sub.add_parser("lean", help="도구를 줄인 대화형 Claude 실행 (base 약 -78%)")
+    s = sub.add_parser("lean", help="도구를 줄인 대화형 Claude 실행 (base 약 -78%%)")
     s.add_argument("--print", action="store_true", help="실행할 명령만 출력")
     s.add_argument("extra", nargs=argparse.REMAINDER, help="claude 에 그대로 넘길 인자 (-- 뒤에)")
     s.set_defaults(func=cmd_lean)
