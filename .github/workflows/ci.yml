@@ -1,0 +1,30 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+      - name: Install and smoke test
+        run: |
+          pip install .
+          cd "$(mktemp -d)"
+          git init -q
+          relay init --statusline
+          test -f .claude/commands/handoff.md
+          test -f .agent/rules/relay.md
+          relay task new "smoke test"
+          relay handoff 1 --to claude
+          relay estimate --offload 0.5 --after-sessions 2

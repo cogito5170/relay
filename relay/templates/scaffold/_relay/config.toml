@@ -1,0 +1,20 @@
+# relay 설정 — 생략한 값은 기본값을 쓴다 (relay/config.py 의 DEFAULTS).
+
+[budget]
+warn_context = 60000    # statusline 경고: 마지막 요청의 컨텍스트 토큰
+max_context = 100000    # 이 값 이상이면 /handoff → /clear 권장
+warn_requests = 40      # 세션 요청 수가 이 값을 넘어도 권장
+pack_tokens = 12000     # relay pack 기본 예산
+
+# 가중 사용량 근사치 (API 가격 비율, input = 1)
+[weights]
+input = 1.0
+cache_write = 1.25
+cache_read = 0.1
+output = 5.0
+
+# 라우팅 규칙을 바꾸려면 [[route]] 블록 전체를 다시 정의한다 (리스트는 병합되지 않고 교체됨).
+# [[route]]
+# agent = "antigravity"
+# reason = "..."
+# keywords = ["explore", "탐색"]

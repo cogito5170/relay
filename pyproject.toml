@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "relay-tokens"
+version = "0.1.0"
+description = "ChatGPT · Antigravity · Claude 를 파일 기반 인수인계로 묶어 Claude 토큰을 아끼는 워크플로우 CLI"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+relay = "relay.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["relay*"]
+
+[tool.setuptools.package-data]
+relay = ["templates/**/*", "templates/**/.gitkeep"]
