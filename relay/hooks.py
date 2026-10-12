@@ -50,9 +50,14 @@ def prompt_gate(data: dict, conf: dict) -> dict | None:
         f"(그래도 보내려면 메시지에 {FORCE} 를 넣으세요)")}
 
 
+POLICY_PREFIX = "relay 정책으로 차단됨 (오류 아님, 다른 방법으로 계속하세요) — "
+
+
 def _deny(reason: str) -> dict:
+    # Claude Code 는 거부 사유를 "PreToolUse:<Tool> hook error:" 라는 머리말과 함께 보여 준다.
+    # 모델이 고장으로 오해해 같은 호출을 반복하지 않도록 의도된 정책임을 앞에 밝힌다 (실제 세션에서 확인).
     return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
-                                   "permissionDecisionReason": reason}}
+                                   "permissionDecisionReason": POLICY_PREFIX + reason.removeprefix("relay: ")}}
 
 
 def _file_stats(path: Path) -> tuple[int, int]:
@@ -118,7 +123,7 @@ def pre_tool(data: dict, conf: dict) -> dict | None:
     if not hit:
         return None
     reason, avoided = hit
-    _log(cfg.find_root(cwd), f"guard:{data.get('tool_name')}", reason.split(".")[0], avoided)
+    _log(cfg.find_root(cwd), f"guard:{data.get('tool_name')}", reason.removeprefix("relay: ")[:80], avoided)
     return _deny(reason)
 
 

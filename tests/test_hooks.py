@@ -53,6 +53,7 @@ class HooksTest(unittest.TestCase):
         out = denied["hookSpecificOutput"]
         self.assertEqual((out["hookEventName"], out["permissionDecision"]), ("PreToolUse", "deny"))
         self.assertIn("offset/limit", out["permissionDecisionReason"])
+        self.assertTrue(out["permissionDecisionReason"].startswith(hooks.POLICY_PREFIX))
         self.assertIsNone(self.pretool("Read", file_path=str(self.dir / "big.py"), offset=10, limit=50))
         self.assertIsNone(self.pretool("Read", file_path="small.py"))
         self.assertIsNone(self.pretool("Read", file_path="missing.py"))
@@ -77,6 +78,7 @@ class HooksTest(unittest.TestCase):
         self.pretool("Read", file_path="big.py")
         rows = [json.loads(l) for l in (self.dir / ".relay" / "events.jsonl").read_text().splitlines()]
         self.assertEqual(rows[-1]["tool"], "guard:Read")
+        self.assertIn("big.py", rows[-1]["task"])
         self.assertGreater(rows[-1]["avoided"], 1000)
 
     def test_fail_open(self):

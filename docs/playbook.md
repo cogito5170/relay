@@ -15,6 +15,15 @@
    | 세션이 길다 (req 많음) | hooks 의 prompt_gate 가 한도에서 메시지를 막고 /handoff 를 안내 |
 
 4. `relay init --hooks` 로 규칙을 강제한다. CLAUDE.md 규칙은 모델이 잊을 수 있지만 hook 은 항상 실행된다. 막힌 횟수와 막은 크기는 `relay events` 의 avoided 로 본다.
+   실제 Claude Code 세션(`claude -p`, 2.1.296)에서 확인한 동작:
+
+   | 상황 | 결과 |
+   |---|---|
+   | 1000줄 파일을 범위 없이 Read | 차단 → Claude 가 Grep 으로 전환해 정답 도출, 2.7k tok 파일은 컨텍스트에 안 들어감 |
+   | `pytest` 를 출력 제한 없이 실행 | 차단, 사유가 Claude 에게 전달됨 |
+   | 컨텍스트 한도 초과 상태에서 메시지 전송 | 차단, **모델 호출 0회 · 토큰 0** (메시지가 모델에 가지 않음) |
+   | 같은 메시지에 `[force]` | 정상 처리 |
+
 5. 아래 "Claude Code 다이어트"를 적용하고 `relay doctor` 로 base 가 얼마나 줄었는지 확인한다.
 
 ## 1. 작업 하나의 표준 경로
