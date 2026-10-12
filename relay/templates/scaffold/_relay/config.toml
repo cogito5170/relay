@@ -6,6 +6,15 @@ max_context = 100000    # 이 값 이상이면 /handoff → /clear 권장
 warn_requests = 40      # 세션 요청 수가 이 값을 넘어도 권장
 pack_tokens = 12000     # relay pack 기본 예산
 
+# Claude Code hooks (relay init --hooks). 통과 시 토큰 비용 0, 실패해도 세션을 막지 않음(fail-open).
+[hooks]
+enabled = ["prompt_gate", "read_guard", "bash_guard"]   # "write_guard" 추가 시 큰 Write 차단
+gate_context = 100000   # 이 컨텍스트 이상이면 새 메시지 차단 → /handoff → /clear  (메시지에 [force] 로 통과)
+gate_requests = 80
+read_max_lines = 400    # 이보다 긴 파일은 offset/limit 없이 Read 금지
+write_max_tokens = 6000
+# noisy_commands = ["pytest", "npm test", "git log", ...]   # 출력 제한(| tail, -q 등) 없이 실행 금지
+
 # 가중 사용량 근사치 (API 가격 비율, input = 1)
 [weights]
 input = 1.0

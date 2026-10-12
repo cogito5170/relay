@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "relay-tokens"
-version = "0.2.0"
+version = "0.3.0"
 description = "ChatGPT · Antigravity · Claude 를 파일 기반 인수인계로 묶어 Claude 토큰을 아끼는 워크플로우 CLI"
 readme = "README.md"
 requires-python = ">=3.11"

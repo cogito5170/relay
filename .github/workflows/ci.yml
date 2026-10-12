@@ -33,3 +33,7 @@ jobs:
           printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci"}}}' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"relay_task_list","arguments":{}}}' | relay mcp --profile claude | tee out.jsonl
           grep -q '001-smoke-test' out.jsonl
           relay events
+          relay init --hooks && grep -q "relay hook pretool" .claude/settings.local.json
+          echo '{"tool_name":"Bash","tool_input":{"command":"pytest"},"cwd":"."}' | relay hook pretool | grep -q deny
+          relay why || true
+          relay doctor

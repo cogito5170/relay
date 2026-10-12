@@ -10,7 +10,7 @@ from pathlib import Path
 
 from relay import config as cfg
 from relay import pack as packmod
-from relay import events, mcp_server, router, statusline, tasks, usage
+from relay import attribution, doctor, events, hooks, mcp_server, router, statusline, tasks, usage
 from relay.tokens import estimate, human
 
 BASELINE = Path.home() / ".relay" / "baseline.json"
@@ -30,13 +30,17 @@ def cmd_init(args) -> int:
     root = Path.cwd()
     for path, status in tasks.scaffold(root, force=args.force):
         print(f"  {status:<16} {path}")
-    if args.statusline:
+    if args.statusline or args.hooks:
         settings = root / ".claude" / "settings.local.json"
         data = json.loads(settings.read_text(encoding="utf-8")) if settings.is_file() else {}
-        data["statusLine"] = {"type": "command", "command": "relay statusline"}
+        if args.statusline:
+            data["statusLine"] = {"type": "command", "command": "relay statusline"}
+        if args.hooks:
+            hooks.install(data)
         settings.parent.mkdir(parents=True, exist_ok=True)
         settings.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        print(f"  {'statusline':<16} {settings.relative_to(root)}")
+        added = " + ".join(n for n, on in (("statusline", args.statusline), ("hooks", args.hooks)) if on)
+        print(f"  {added:<16} {settings.relative_to(root)}")
     if args.mcp:
         mcp_json = root / ".mcp.json"
         data = json.loads(mcp_json.read_text(encoding="utf-8")) if mcp_json.is_file() else {}
@@ -222,15 +226,56 @@ def cmd_events(args) -> int:
     if not records:
         print("(이벤트 없음 — MCP 서버를 통해 도구가 호출되면 .relay/events.jsonl 에 쌓입니다)")
         return 0
-    print(f"{'client':<20}{'tool':<20}{'calls':>6}{'errors':>7}{'tok out':>9}")
+    print(f"{'client':<20}{'tool':<20}{'calls':>6}{'errors':>7}{'tok out':>9}{'avoided':>9}")
     for (client, tool), row in events.summarize(records).items():
         print(f"{client[:19]:<20}{tool.removeprefix('relay_'):<20}{row['calls']:>6}{row['errors']:>7}"
-              f"{human(row['tokens_out']):>9}")
+              f"{human(row['tokens_out']):>9}{human(row['avoided']):>9}")
+    print("(avoided: hook 이 막은 Read/출력의 크기 — 막지 않았다면 이후 요청마다 다시 읽혔을 양)")
     if args.tail:
         print()
         for r in records[-args.tail:]:
             mark = "ok " if r.get("ok", True) else "ERR"
             print(f"{r.get('ts', '')} {mark} {r.get('client', '?'):<14} {r.get('tool', ''):<18} {r.get('task') or ''}")
+    return 0
+
+
+def cmd_why(args) -> int:
+    report = attribution.analyze(attribution.find_transcript(args.session))
+    n, total = report.requests, report.total or 1
+    print(f"세션 {report.path.stem[:8]} · 요청 {n}회 · 컨텍스트 재독 합계 {human(report.total)}")
+    print(f"\n{'원인':<20}{'비중':>6}{'토큰':>9}")
+    cats = report.by_category()
+    for cat, cost in cats:
+        print(f"{cat:<20}{cost / total:>6.0%}{human(cost):>9}")
+    print(f"\n가장 비싼 내용 {args.top}개  (크기 × 이후 다시 읽힌 횟수)")
+    for it in report.top(args.top):
+        print(f"  req#{it.start:<4} {human(it.tokens):>6} × {it.reads(n):>3}회 = {human(it.cost(n)):>6}"
+              f" ({it.cost(n) / total:.1%})  {it.label[:60]}")
+    print("\n처방")
+    for cat, cost in cats[:4]:
+        if cat in attribution.ADVICE and cost / total >= 0.05:
+            print(f"  {cost / total:>4.0%}  {attribution.ADVICE[cat]}")
+    return 0
+
+
+def cmd_doctor(args) -> int:
+    d = doctor.diagnose(cfg.find_root(), args.days)
+    print(f"주간 Claude 요청 수 (최근 {args.days:g}일 기준): {d.weekly_requests}")
+    if d.base_tokens:
+        print(f"고정 부분(base, 최근 세션 첫 요청 중앙값): ~{human(d.base_median)} tok"
+              f"  → 주당 {human(d.weekly_cost(d.base_median))} 재독")
+        print(f"  base 10k 를 줄이면 주당 약 {human(d.weekly_cost(10_000))} 절감")
+    print("\n[CLAUDE.md 계열 — 매 요청 포함]")
+    for path, tok in d.memory_files or [("(없음)", 0)]:
+        print(f"  {human(tok):>6} tok  주당 {human(d.weekly_cost(tok)):>6}  {path}")
+    print("\n[MCP 서버 — 도구 정의가 매 요청 포함]")
+    for scope, name, cmd in d.mcp_servers or [("-", "(설정 없음)", "")]:
+        print(f"  {scope:<8} {name:<20} {cmd}")
+    print("\n처방")
+    print("  1. Claude Code 에서 /context 실행 → 'MCP tools' · 'Memory files' 항목 크기 확인")
+    print("  2. 이 프로젝트에서 안 쓰는 MCP 서버: claude mcp remove <name> -s <scope> (또는 /mcp 에서 disable)")
+    print("  3. CLAUDE.md 는 '매번 지켜야 할 규칙'만. 참고 문서는 @import 대신 경로만 적어 필요할 때 읽게")
+    print("  4. relay MCP 는 claude 프로필만 (relay mcp --cost)")
     return 0
 
 
@@ -242,6 +287,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--force", action="store_true", help="기존 파일 덮어쓰기")
     s.add_argument("--statusline", action="store_true", help=".claude/settings.local.json 에 statusline 등록")
     s.add_argument("--mcp", action="store_true", help=".mcp.json 에 relay MCP 서버 등록 (Claude Code)")
+    s.add_argument("--hooks", action="store_true", help="Claude Code hooks 등록 (컨텍스트 한도 차단, 큰 Read/출력 차단)")
     s.set_defaults(func=cmd_init)
 
     s = sub.add_parser("task", help="작업 폴더 생성/목록")
@@ -307,6 +353,19 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("events", help="MCP 도구 호출 감사 로그 요약")
     s.add_argument("--tail", type=int, default=0)
     s.set_defaults(func=cmd_events)
+
+    s = sub.add_parser("why", help="세션의 캐시 읽기를 원인별로 분해")
+    s.add_argument("session", nargs="?", help="세션 id 접두어 (기본: 현재 프로젝트의 최근 세션)")
+    s.add_argument("--top", type=int, default=8)
+    s.set_defaults(func=cmd_why)
+
+    s = sub.add_parser("doctor", help="고정 부분(MCP·CLAUDE.md) 진단과 주간 절감량")
+    s.add_argument("--days", type=float, default=14)
+    s.set_defaults(func=cmd_doctor)
+
+    s = sub.add_parser("hook", help="Claude Code hook 진입점 (stdin JSON)")
+    s.add_argument("event", choices=["prompt", "pretool"])
+    s.set_defaults(func=lambda a: hooks.main(a.event))
 
     s = sub.add_parser("statusline", help="Claude Code statusline (stdin JSON)")
     s.set_defaults(func=lambda a: statusline.main())

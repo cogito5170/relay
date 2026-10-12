@@ -133,6 +133,9 @@ Claude      › /pickup 003                      → relay_task_read (brief+stat
 | `relay mcp [--profile claude\|explorer\|builder\|full] [--root R] [--cost]` | MCP 서버 (stdio). `--cost` 는 프로필별 도구 정의 토큰 비용 |
 | `relay mcp-config <claude\|codex\|antigravity>` | 클라이언트별 설정 스니펫 |
 | `relay events [--tail N]` | MCP 도구 호출 감사 로그 요약 (클라이언트 · 도구 · 공급 토큰) |
+| `relay why [session]` | 세션의 캐시 읽기를 원인별로 분해 (고정 부분 · thinking · Claude 가 쓴 내용 · 명령 출력 …) + 처방 |
+| `relay doctor` | 고정 부분 진단: base 크기, CLAUDE.md·@import, MCP 서버 목록, 주간 절감량 |
+| `relay init --hooks` / `relay hook prompt\|pretool` | Claude Code hooks: 컨텍스트 한도 넘으면 메시지 차단, 큰 파일 전체 Read · 무제한 출력 명령 차단 |
 | `relay statusline` | Claude Code 하단에 `ctx 72k ████░ · req 31 · read 1.9M · ⚠` 표시 (토큰 비용 0) |
 
 ## 6. 플랫폼 엔지니어링 관점
@@ -152,10 +155,11 @@ Claude      › /pickup 003                      → relay_task_read (brief+stat
 
 - [x] **v0.1** 파일 프로토콜 · CLI · 사용량 관측 · statusline · CI
 - [x] **v0.2** relay MCP 서버: 세 도구가 task/pack 을 도구 호출로 직접 읽고 씀 (복붙 제거) · 프로필별 최소 권한 · 감사 로그 → [docs/mcp.md](docs/mcp.md)
-- [ ] **v0.2.x** ChatGPT 개발자 모드용 인증된 HTTP 전송 · MCP prompts 로 `/pickup` 공통화
-- [ ] **v0.3** 주간 예산 예측 ("이 속도면 금요일에 한도 소진") + HTML 대시보드
+- [x] **v0.3** 측정 → 강제: `relay why` (캐시 읽기 원인 분해), `relay doctor` (고정 부분), hooks (세션 한도 · 출력 가드)
+- [ ] ChatGPT 개발자 모드용 인증된 HTTP 전송
 - [ ] **v0.4** PR 파이프라인: Codex 1차 리뷰 → 위험한 diff 만 Claude 로 에스컬레이션
 - [ ] **v0.5** 라우팅 품질 측정: 작업별 소요 토큰·재작업률을 기록해 규칙 자동 조정
+- 검토 후 보류: 코드용 RAG — 탐색은 이미 Antigravity → pack 으로 Claude 토큰 0, 측정상 큰 비용은 고정 부분·세션 길이·thinking 이라 효과가 작음
 
 ## 7. 개발
 

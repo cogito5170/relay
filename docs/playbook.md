@@ -4,7 +4,18 @@
 
 1. 평소처럼 일하면서 `relay usage --days 7 --save-baseline` 으로 **기준선**을 저장한다. 이게 없으면 "5배"를 확인할 방법이 없다.
 2. `relay usage --sessions 10` 으로 cache read 상위 세션을 본다. 대부분 **요청 수가 많고 오래 이어진 세션**이다. 그 세션에서 Claude 가 한 일 중 탐색·반복 구현이 얼마나 되는지 확인한다. 그만큼이 오프로드 대상이다.
-3. 아래 "Claude Code 다이어트"를 적용하고 첫 요청 컨텍스트(base)가 얼마나 줄었는지 확인한다.
+3. `relay why` 로 무거운 세션 하나를 분해한다. 어떤 원인이 큰지에 따라 처방이 다르다:
+
+   | `relay why` 에서 큰 항목 | 처방 |
+   |---|---|
+   | base | `relay doctor` → MCP 서버 끄기, CLAUDE.md 줄이기 (효과가 가장 큼: 매 요청에 적용) |
+   | thinking | 루틴 작업은 effort/thinking 을 낮추고, 어려운 판단에만 높이기 |
+   | Write/Edit input | 큰 문서·반복 코드는 Codex/Antigravity 가 쓰고 Claude 는 diff 리뷰만 (`write_guard` 켜기) |
+   | Bash / Read output | `relay init --hooks` (bash_guard · read_guard) |
+   | 세션이 길다 (req 많음) | hooks 의 prompt_gate 가 한도에서 메시지를 막고 /handoff 를 안내 |
+
+4. `relay init --hooks` 로 규칙을 강제한다. CLAUDE.md 규칙은 모델이 잊을 수 있지만 hook 은 항상 실행된다. 막힌 횟수와 막은 크기는 `relay events` 의 avoided 로 본다.
+5. 아래 "Claude Code 다이어트"를 적용하고 `relay doctor` 로 base 가 얼마나 줄었는지 확인한다.
 
 ## 1. 작업 하나의 표준 경로
 

@@ -37,10 +37,11 @@ def read(root: Path) -> list[dict]:
 
 def summarize(records: list[dict]) -> dict[tuple[str, str], dict]:
     """(client, tool) → {calls, errors, tokens_out}"""
-    table: dict[tuple[str, str], dict] = defaultdict(lambda: {"calls": 0, "errors": 0, "tokens_out": 0})
+    table: dict[tuple[str, str], dict] = defaultdict(lambda: {"calls": 0, "errors": 0, "tokens_out": 0, "avoided": 0})
     for r in records:
         row = table[(r.get("client", "?"), r.get("tool", "?"))]
         row["calls"] += 1
         row["errors"] += 0 if r.get("ok", True) else 1
         row["tokens_out"] += int(r.get("tokens_out") or 0)
+        row["avoided"] += int(r.get("avoided") or 0)
     return dict(sorted(table.items()))
