@@ -124,7 +124,7 @@ relay lean      # 대화형 Claude 를 도구 6개로: 첫 요청 컨텍스트 3
 relay run       # explore(Gemini) → pack → implement(Codex) → verify → review(Claude lean, 1턴 ≈ 6k)
 ```
 
-하루 단위 운영법은 [docs/playbook.md](docs/playbook.md).
+하루 단위 운영법은 [docs/playbook.md](docs/playbook.md). 새 세션은 [docs/HANDOFF.md](docs/HANDOFF.md) 부터 (Pro 30일 운용 계획).
 
 ## 5. 명령어
 
