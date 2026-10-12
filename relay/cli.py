@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -9,7 +10,7 @@ from pathlib import Path
 
 from relay import config as cfg
 from relay import pack as packmod
-from relay import router, statusline, tasks, usage
+from relay import events, mcp_server, router, statusline, tasks, usage
 from relay.tokens import estimate, human
 
 BASELINE = Path.home() / ".relay" / "baseline.json"
@@ -21,11 +22,6 @@ def _copy(text: str) -> bool:
             subprocess.run(cmd, input=text, text=True, check=False)
             return True
     return False
-
-
-def _route_summary(text: str, conf: dict) -> str:
-    routes = router.route(text, conf)
-    return " → ".join(f"{r.agent}" for r in routes[:3]) + f" ({routes[0].reason})"
 
 
 # ---------------------------------------------------------------- commands
@@ -41,6 +37,12 @@ def cmd_init(args) -> int:
         settings.parent.mkdir(parents=True, exist_ok=True)
         settings.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         print(f"  {'statusline':<16} {settings.relative_to(root)}")
+    if args.mcp:
+        mcp_json = root / ".mcp.json"
+        data = json.loads(mcp_json.read_text(encoding="utf-8")) if mcp_json.is_file() else {}
+        data.setdefault("mcpServers", {})["relay"] = {"command": "relay", "args": ["mcp", "--profile", "claude"]}
+        mcp_json.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        print(f"  {'mcp (claude)':<16} .mcp.json   — Codex/Antigravity: relay mcp-config codex|antigravity")
     print("\n다음: relay task new \"작업 제목\"")
     return 0
 
@@ -50,9 +52,9 @@ def cmd_task(args) -> int:
     conf = cfg.load(root)
     if args.action == "new":
         title = " ".join(args.title)
-        path = tasks.create(root, title, _route_summary(title, conf))
+        path = tasks.create(root, title, router.summary(title, conf))
         print(f"생성: {path.relative_to(root)}/brief.md")
-        print(f"추천: {_route_summary(title, conf)}")
+        print(f"추천: {router.summary(title, conf)}")
         print(f"brief 다듬기: relay handoff {path.name.split('-')[0]} --to chatgpt --copy")
         return 0
     for t in tasks.list_tasks(root):
@@ -80,8 +82,7 @@ def cmd_pack(args) -> int:
     built = packmod.build(root, refs_text=refs_text, full=args.full or [], outlines=args.outline or [],
                           diff_ref=args.diff, include_tree=args.tree,
                           budget=args.budget or conf["budget"]["pack_tokens"])
-    header = f"<!-- relay pack: {task.name} · ~{built.tokens} tokens -->\n"
-    text = built.render(header)
+    text = built.render(packmod.header(task.name, built))
     if args.stdout:
         print(text)
     else:
@@ -190,6 +191,49 @@ def cmd_estimate(args) -> int:
     return 0
 
 
+def cmd_mcp(args) -> int:
+    if args.cost:
+        for name in mcp_server.PROFILES:
+            tools = mcp_server.PROFILES[name]["tools"]
+            print(f"{name:<9} ~{mcp_server.definition_tokens(name):>4} tok/요청  tools={len(tools)}"
+                  f"  write={','.join(mcp_server.PROFILES[name]['write'])}")
+        return 0
+    root = Path(args.root) if args.root else (Path(os.environ["RELAY_ROOT"]) if os.environ.get("RELAY_ROOT") else None)
+    mcp_server.Server(args.profile, root).serve()
+    return 0
+
+
+def cmd_mcp_config(args) -> int:
+    profile = args.profile or mcp_server.DEFAULT_PROFILE[args.client]
+    root = None if args.no_root else (Path(args.root) if args.root else cfg.find_root())
+    print(mcp_server.client_config(args.client, profile, root))
+    hints = {
+        "claude": "→ 프로젝트의 .mcp.json 에 저장 (또는 relay init --mcp). 확인: claude 실행 후 /mcp",
+        "codex": "→ ~/.codex/config.toml 에 추가. 확인: codex 실행 후 /mcp",
+        "antigravity": "→ Antigravity 의 MCP 설정(mcp_config.json, '…' 메뉴 → MCP Servers → Manage → raw config)에 병합",
+    }
+    print(hints[args.client], file=sys.stderr)
+    return 0
+
+
+def cmd_events(args) -> int:
+    root = cfg.find_root()
+    records = events.read(root)
+    if not records:
+        print("(이벤트 없음 — MCP 서버를 통해 도구가 호출되면 .relay/events.jsonl 에 쌓입니다)")
+        return 0
+    print(f"{'client':<20}{'tool':<20}{'calls':>6}{'errors':>7}{'tok out':>9}")
+    for (client, tool), row in events.summarize(records).items():
+        print(f"{client[:19]:<20}{tool.removeprefix('relay_'):<20}{row['calls']:>6}{row['errors']:>7}"
+              f"{human(row['tokens_out']):>9}")
+    if args.tail:
+        print()
+        for r in records[-args.tail:]:
+            mark = "ok " if r.get("ok", True) else "ERR"
+            print(f"{r.get('ts', '')} {mark} {r.get('client', '?'):<14} {r.get('tool', ''):<18} {r.get('task') or ''}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="relay", description="ChatGPT · Antigravity · Claude 토큰 효율 워크플로우")
     sub = p.add_subparsers(dest="command", required=True)
@@ -197,6 +241,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("init", help="현재 프로젝트에 relay 프로토콜 파일 설치")
     s.add_argument("--force", action="store_true", help="기존 파일 덮어쓰기")
     s.add_argument("--statusline", action="store_true", help=".claude/settings.local.json 에 statusline 등록")
+    s.add_argument("--mcp", action="store_true", help=".mcp.json 에 relay MCP 서버 등록 (Claude Code)")
     s.set_defaults(func=cmd_init)
 
     s = sub.add_parser("task", help="작업 폴더 생성/목록")
@@ -245,6 +290,23 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--after-sessions", type=int)
     s.add_argument("--after-base", type=int)
     s.set_defaults(func=cmd_estimate)
+
+    s = sub.add_parser("mcp", help="MCP 서버 실행 (stdio)")
+    s.add_argument("--profile", default="full", choices=list(mcp_server.PROFILES))
+    s.add_argument("--root", help="프로젝트 루트 (기본: $RELAY_ROOT → 클라이언트 roots → 현재 디렉터리)")
+    s.add_argument("--cost", action="store_true", help="프로필별 도구 정의 토큰 비용 출력")
+    s.set_defaults(func=cmd_mcp)
+
+    s = sub.add_parser("mcp-config", help="클라이언트별 MCP 설정 스니펫 출력")
+    s.add_argument("client", choices=list(mcp_server.DEFAULT_PROFILE))
+    s.add_argument("--profile", choices=list(mcp_server.PROFILES))
+    s.add_argument("--root", help="--root 값 (기본: 현재 프로젝트)")
+    s.add_argument("--no-root", action="store_true", help="--root 를 넣지 않음 (클라이언트 cwd/roots 사용)")
+    s.set_defaults(func=cmd_mcp_config)
+
+    s = sub.add_parser("events", help="MCP 도구 호출 감사 로그 요약")
+    s.add_argument("--tail", type=int, default=0)
+    s.set_defaults(func=cmd_events)
 
     s = sub.add_parser("statusline", help="Claude Code statusline (stdin JSON)")
     s.set_defaults(func=lambda a: statusline.main())

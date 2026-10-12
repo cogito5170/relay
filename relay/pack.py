@@ -63,6 +63,10 @@ class Pack:
         return "\n".join(parts)
 
 
+def header(task_name: str, pack: Pack) -> str:
+    return f"<!-- relay pack: {task_name} · ~{pack.tokens} tokens -->\n"
+
+
 def _lang(path: Path) -> str:
     return {".py": "python", ".ts": "ts", ".tsx": "tsx", ".js": "js", ".go": "go", ".rs": "rust",
             ".java": "java", ".kt": "kotlin", ".md": "md", ".yaml": "yaml", ".yml": "yaml",
@@ -137,16 +141,24 @@ def parse_refs(text: str) -> list[tuple[str, int, int]]:
     return merged
 
 
+def inside(root: Path, path: Path) -> bool:
+    """프로젝트 밖(`../`, 절대경로, 심볼릭 링크)을 읽지 못하게 막는다. MCP 로 노출되므로 필수."""
+    return path.resolve().is_relative_to(root.resolve())
+
+
 def expand_globs(root: Path, patterns: list[str]) -> list[Path]:
     found: list[Path] = []
     for pattern in patterns:
         direct = root / pattern
+        if not inside(root, direct):
+            continue
         if direct.is_file():
             found.append(direct)
             continue
         for p in sorted(root.rglob("*")):
             rel = p.relative_to(root)
-            if p.is_file() and not IGNORED_DIRS & set(rel.parts) and fnmatch.fnmatch(str(rel), pattern):
+            if (p.is_file() and not IGNORED_DIRS & set(rel.parts) and fnmatch.fnmatch(str(rel), pattern)
+                    and inside(root, p)):
                 found.append(p)
     seen, unique = set(), []
     for p in found:
@@ -204,7 +216,9 @@ def build(root: Path, *, refs_text: str = "", full: list[str] = (), outlines: li
 
     for rel, start, end in parse_refs(refs_text):
         path = root / rel
-        if path.is_file():
+        if not inside(root, path):
+            pack.skipped.append(f"{rel} (프로젝트 밖 — 거부)")
+        elif path.is_file():
             add(Section(f"{rel}:{start}-{end}", excerpt(path, start, end), _lang(path)))
         else:
             pack.skipped.append(f"{rel} (파일 없음)")

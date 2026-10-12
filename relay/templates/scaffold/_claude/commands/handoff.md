@@ -2,7 +2,7 @@
 description: 현재 작업 상태를 state.md 에 저장하고 /clear 준비
 argument-hint: <task-id>
 ---
-`.relay/tasks/$ARGUMENTS/state.md` 를 덮어써라 (task id 가 비어 있으면 `.relay/tasks/` 의 가장 최근 폴더).
+`.relay/tasks/$ARGUMENTS/state.md` 를 덮어써라 (task id 가 비어 있으면 가장 최근 task). `relay_task_write` 도구가 있으면 `file: "state"` 로 그것을 쓴다.
 250단어 이내, 아래 형식만 사용:
 
 ## Done

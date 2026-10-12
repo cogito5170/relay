@@ -22,3 +22,8 @@ def route(text: str, config: dict) -> list[Route]:
     if not results:
         results.append(Route(config["default_agent"], 0, "매칭 규칙 없음 → 기본값", []))
     return results
+
+
+def summary(text: str, config: dict) -> str:
+    routes = route(text, config)
+    return " → ".join(r.agent for r in routes[:3]) + f" ({routes[0].reason})"

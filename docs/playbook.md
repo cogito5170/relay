@@ -18,6 +18,8 @@
 ⑦ Claude     작업 단위 끝                /handoff N → /clear → (이어서) /pickup N
 ```
 
+MCP 를 연결했다면 ②④⑥ 의 `handoff`/복붙은 "003 탐색해줘", "003 구현해줘", `/pickup 003` 한 줄로 바뀐다 ([mcp.md](mcp.md)). ChatGPT 웹만 복붙이 남는다.
+
 모든 작업이 7단계를 다 거칠 필요는 없다. `relay route "<설명>"` 의 추천을 출발점으로 쓴다.
 
 | 작업 예시 | 경로 |
@@ -44,6 +46,7 @@
 |---|---|---|
 | MCP 서버 | `/mcp`, `/context` | 이 프로젝트에서 안 쓰는 서버는 끈다. 도구 정의는 매 요청 base 에 들어간다 |
 | CLAUDE.md | 전역 `~/.claude/CLAUDE.md` + 프로젝트 + 하위 디렉터리 | 짧게. 자세한 문서는 `@import` 대신 필요할 때 읽게 링크만 |
+| relay MCP | `relay mcp --cost` | Claude 에는 `claude` 프로필(약 544 tok)만. `full` 은 쓰지 않는다 |
 | 커스텀 에이전트 / 스킬 | 설명 문구가 base 에 들어감 | 안 쓰는 것은 제거 |
 | 서브에이전트 | 별도 컨텍스트지만 같은 한도를 씀 | 탐색 목적이면 Antigravity 로 |
 

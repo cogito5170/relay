@@ -65,9 +65,11 @@ flowchart LR
     C -->|state.md| C
     C -.->|문서화| G
     U[(relay usage<br/>statusline)] -.측정.-> C
+    A & X & C -. 도구 호출 .-> M[[relay MCP 서버]]
 ```
 
 **인수인계의 단위는 대화가 아니라 파일**이다. 모든 도구가 `.relay/tasks/<id>/` 를 읽고 쓴다.
+v0.2 부터는 Claude Code · Codex · Antigravity 가 이 폴더를 **relay MCP 서버**의 도구 호출로 직접 읽고 쓴다 (복붙 제거) → [docs/mcp.md](docs/mcp.md)
 
 | 파일 | 작성 | 읽는 쪽 |
 |---|---|---|
@@ -92,7 +94,9 @@ flowchart LR
 pip install git+https://github.com/cogito5170/effiency.git   # 또는 clone 후 pip install -e .
 
 cd ~/your-project
-relay init --statusline            # AGENTS.md · CLAUDE.md · .agent/ · .claude/commands · .relay/ 설치
+relay init --statusline --mcp      # AGENTS.md · CLAUDE.md · .agent/ · .claude/commands · .relay/ · .mcp.json 설치
+relay mcp-config codex             # → ~/.codex/config.toml 에 붙여넣기
+relay mcp-config antigravity       # → Antigravity MCP 설정에 병합
 relay usage --days 7 --save-baseline   # Max 플랜일 때 1주일치 기준선 저장 (중요)
 
 relay task new "결제 웹훅 재시도 로직 추가"
@@ -103,6 +107,14 @@ relay handoff 1 --to codex             # → Codex: 구현 + 테스트
 relay pack 1 --refs explore.md --diff main
 relay handoff 1 --to claude            # → Claude: 리뷰·판단 (새 세션 첫 메시지로)
 relay usage                            # 기준선 대비 몇 배인지 확인
+```
+
+MCP 가 연결된 도구에서는 위 복붙 단계가 대화 한 줄로 바뀐다.
+
+```text
+Antigravity › 003 탐색해서 explore 남겨줘        → relay_task_read → relay_task_write(file="explore")
+Codex       › 003 구현해줘                      → relay_task_read → (구현) → relay_task_write(file="out-codex")
+Claude      › /pickup 003                      → relay_task_read (brief+state+pack 한 번에)
 ```
 
 하루 단위 운영법은 [docs/playbook.md](docs/playbook.md).
@@ -118,6 +130,9 @@ relay usage                            # 기준선 대비 몇 배인지 확인
 | `relay handoff [id] --to <agent> [--ask ...] [--copy]` | 에이전트별 프롬프트 생성 (`prompt-<agent>.md`) |
 | `relay usage [--days N] [--source claude\|codex\|all] [--save-baseline] [--json]` | Claude Code / Codex 로컬 로그 분석, 기준선 대비 배수 |
 | `relay estimate ...` | 오프로드·세션 분할 효과 계산 |
+| `relay mcp [--profile claude\|explorer\|builder\|full] [--root R] [--cost]` | MCP 서버 (stdio). `--cost` 는 프로필별 도구 정의 토큰 비용 |
+| `relay mcp-config <claude\|codex\|antigravity>` | 클라이언트별 설정 스니펫 |
+| `relay events [--tail N]` | MCP 도구 호출 감사 로그 요약 (클라이언트 · 도구 · 공급 토큰) |
 | `relay statusline` | Claude Code 하단에 `ctx 72k ████░ · req 31 · read 1.9M · ⚠` 표시 (토큰 비용 0) |
 
 ## 6. 플랫폼 엔지니어링 관점
@@ -128,14 +143,16 @@ relay usage                            # 기준선 대비 몇 배인지 확인
 |---|---|
 | Golden path | `task → handoff → pack → handoff` 표준 경로, `relay init` 한 번으로 설치 |
 | 인터페이스 계약 | `.relay/tasks/<id>/` 파일 스키마 + `path:start-end` 참조 형식 |
-| 관측성 | `relay usage` (로그 기반 지표), `statusline` (실시간) |
-| 정책 / 예산 | `config.toml` 의 컨텍스트·요청 예산, 라우팅 규칙 |
+| 관측성 | `relay usage` (로그 기반 지표), `statusline` (실시간), `relay events` (MCP 감사 로그) |
+| 정책 / 예산 | `config.toml` 의 컨텍스트·요청 예산, 라우팅 규칙, MCP 프로필별 최소 권한 · 도구 정의 토큰 예산 |
+| 플랫폼 API | relay MCP 서버: 세 클라이언트가 같은 계약(task 파일)을 도구로 사용 |
 | 셀프서비스 | 도구별 규칙 파일(AGENTS.md, CLAUDE.md, `.agent/rules`)을 자동 생성 |
 
 ### 로드맵
 
 - [x] **v0.1** 파일 프로토콜 · CLI · 사용량 관측 · statusline · CI
-- [ ] **v0.2** relay MCP 서버: 세 도구가 task/pack 을 도구 호출로 직접 읽고 씀 (복붙 제거)
+- [x] **v0.2** relay MCP 서버: 세 도구가 task/pack 을 도구 호출로 직접 읽고 씀 (복붙 제거) · 프로필별 최소 권한 · 감사 로그 → [docs/mcp.md](docs/mcp.md)
+- [ ] **v0.2.x** ChatGPT 개발자 모드용 인증된 HTTP 전송 · MCP prompts 로 `/pickup` 공통화
 - [ ] **v0.3** 주간 예산 예측 ("이 속도면 금요일에 한도 소진") + HTML 대시보드
 - [ ] **v0.4** PR 파이프라인: Codex 1차 리뷰 → 위험한 diff 만 Claude 로 에스컬레이션
 - [ ] **v0.5** 라우팅 품질 측정: 작업별 소요 토큰·재작업률을 기록해 규칙 자동 조정
