@@ -77,6 +77,11 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
+def is_binary(path: Path) -> bool:
+    with path.open("rb") as f:
+        return b"\0" in f.read(8192)
+
+
 def outline_python(source: str) -> str:
     tree = ast.parse(source)
     lines: list[str] = []
@@ -152,7 +157,7 @@ def expand_globs(root: Path, patterns: list[str]) -> list[Path]:
         direct = root / pattern
         if not inside(root, direct):
             continue
-        if direct.is_file():
+        if direct.is_file() and not IGNORED_DIRS & set(direct.relative_to(root).parts):
             found.append(direct)
             continue
         for p in sorted(root.rglob("*")):
@@ -188,8 +193,10 @@ def tree(root: Path, max_depth: int = 3, max_entries: int = 200) -> str:
     return "\n".join(out)
 
 
-def git_diff(root: Path, ref: str) -> str:
-    result = subprocess.run(["git", "diff", "--unified=3", ref], cwd=root,
+def git_diff(root: Path, ref: str, exclude: tuple[str, ...] = (".relay",)) -> str:
+    """relay 자신의 상태 파일(.relay/)은 작업 변경이 아니므로 기본으로 뺀다."""
+    pathspec = ["--", "."] + [f":(exclude){e}" for e in exclude]
+    result = subprocess.run(["git", "diff", "--unified=3", ref, *pathspec], cwd=root,
                             capture_output=True, text=True, check=False)
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "git diff 실패")
@@ -225,6 +232,9 @@ def build(root: Path, *, refs_text: str = "", full: list[str] = (), outlines: li
 
     for path in expand_globs(root, list(full)):
         rel = path.relative_to(root)
+        if is_binary(path):
+            pack.skipped.append(f"{rel} (바이너리)")
+            continue
         add(Section(str(rel), _read(path), _lang(path)),
             fallback=Section(f"{rel} (outline — 예산 초과로 강등)", outline(path), _lang(path)))
 

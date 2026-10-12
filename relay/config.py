@@ -25,6 +25,29 @@ DEFAULTS = {
                            "go test", "mvn ", "gradle", "git log", "docker logs", "kubectl logs",
                            "journalctl", "npm install", "pip install", "find /", "ls -R"],
     },
+    # relay run — 토큰 절감 파이프라인
+    "pipeline": {
+        "max_iterations": 2,        # review 가 CHANGES 면 재구현하는 최대 횟수
+        "verify": "",               # 테스트 명령 (예: "python -m pytest -q"). 비우면 건너뜀
+        "verify_tail_lines": 40,    # review 에 넘기는 테스트 출력 꼬리 줄 수
+        "outline": [],              # pack 에 시그니처로 넣을 글롭
+        "base_ref": "HEAD",         # review 할 diff 의 기준
+        "review_budget": 15_000,    # review 입력(diff + 새 파일) 최대 토큰
+        "review_model": "sonnet",
+        "review_effort": "medium",
+        "timeout": 1800,
+    },
+    # 단계별 러너 후보 (앞에서부터 설치된 것 사용). {prompt} 가 없으면 stdin 으로 전달.
+    "runners": {
+        "explore": [["gemini", "-p", "{prompt}"],
+                    ["codex", "exec", "--sandbox", "read-only", "{prompt}"]],
+        "implement": [["codex", "exec", "--full-auto", "{prompt}"]],
+        "review": [["claude", "-p", "{prompt}", "--model", "{review_model}", "--effort", "{review_effort}",
+                    "--tools", "Read,Grep,Glob", "--strict-mcp-config", "--system-prompt", "{system_prompt}",
+                    "--max-turns", "8", "--output-format", "json"]],
+    },
+    # relay lean — 도구를 줄인 대화형 Claude (실측 base 35.1k → 7.9k)
+    "lean": {"tools": "Read,Edit,Write,Bash,Grep,Glob", "strict_mcp": True, "effort": ""},
     # API 가격 비율을 "가중 사용량"의 근사치로 쓴다 (input = 1 기준).
     # 구독 한도가 정확히 이 비율로 계산된다는 공식 문서는 없으므로 raw 값과 함께 본다.
     "weights": {"input": 1.0, "cache_write": 1.25, "cache_read": 0.1, "output": 5.0},

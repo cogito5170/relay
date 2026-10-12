@@ -26,7 +26,14 @@
 
 5. 아래 "Claude Code 다이어트"를 적용하고 `relay doctor` 로 base 가 얼마나 줄었는지 확인한다.
 
-## 1. 작업 하나의 표준 경로
+## 1. 기본값 두 가지
+
+- 대화형 Claude 는 항상 `relay lean` 으로 연다 (base 35.1k → 7.9k).
+- 정해진 작업(버그 수정, 기능 추가)은 `relay run` 으로 돌린다. Claude 는 리뷰 1~2턴만 쓴다 ([pipeline.md](pipeline.md)).
+
+아래 수동 경로는 파이프라인이 맞지 않는 작업(설계 논의, 원인 불명 디버깅)용이다.
+
+## 1-1. 작업 하나의 표준 경로 (수동)
 
 ```
 ① ChatGPT    아이디어 → brief          relay task new "…" ; relay handoff N --to chatgpt --copy

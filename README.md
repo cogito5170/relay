@@ -117,6 +117,13 @@ Codex       › 003 구현해줘                      → relay_task_read → (�
 Claude      › /pickup 003                      → relay_task_read (brief+state+pack 한 번에)
 ```
 
+### 가장 효과가 큰 두 명령 (실측 → [docs/pipeline.md](docs/pipeline.md))
+
+```bash
+relay lean      # 대화형 Claude 를 도구 6개로: 첫 요청 컨텍스트 35.1k → 7.9k (−78%), 모든 요청에 적용
+relay run       # explore(Gemini) → pack → implement(Codex) → verify → review(Claude lean, 1턴 ≈ 6k)
+```
+
 하루 단위 운영법은 [docs/playbook.md](docs/playbook.md).
 
 ## 5. 명령어
@@ -133,6 +140,8 @@ Claude      › /pickup 003                      → relay_task_read (brief+stat
 | `relay mcp [--profile claude\|explorer\|builder\|full] [--root R] [--cost]` | MCP 서버 (stdio). `--cost` 는 프로필별 도구 정의 토큰 비용 |
 | `relay mcp-config <claude\|codex\|antigravity>` | 클라이언트별 설정 스니펫 |
 | `relay events [--tail N]` | MCP 도구 호출 감사 로그 요약 (클라이언트 · 도구 · 공급 토큰) |
+| `relay lean [--print] [-- claude 인자]` | 도구를 줄인 대화형 Claude (base −78% 실측) |
+| `relay run [id] [--only/--skip 단계] [--verify CMD] [--dry-run]` | 파이프라인: explore → pack → implement → verify → review, CHANGES 면 재구현 |
 | `relay why [session]` | 세션의 캐시 읽기를 원인별로 분해 (고정 부분 · thinking · Claude 가 쓴 내용 · 명령 출력 …) + 처방 |
 | `relay doctor` | 고정 부분 진단: base 크기, CLAUDE.md·@import, MCP 서버 목록, 주간 절감량 |
 | `relay init --hooks` / `relay hook prompt\|pretool` | Claude Code hooks: 컨텍스트 한도 넘으면 메시지 차단, 큰 파일 전체 Read · 무제한 출력 명령 차단 |
@@ -156,6 +165,7 @@ Claude      › /pickup 003                      → relay_task_read (brief+stat
 - [x] **v0.1** 파일 프로토콜 · CLI · 사용량 관측 · statusline · CI
 - [x] **v0.2** relay MCP 서버: 세 도구가 task/pack 을 도구 호출로 직접 읽고 씀 (복붙 제거) · 프로필별 최소 권한 · 감사 로그 → [docs/mcp.md](docs/mcp.md)
 - [x] **v0.3** 측정 → 강제: `relay why` (캐시 읽기 원인 분해), `relay doctor` (고정 부분), hooks (세션 한도 · 출력 가드)
+- [x] **v0.4** `relay run` 파이프라인 (Gemini → Codex → Claude lean 리뷰 루프) · `relay lean`
 - [ ] ChatGPT 개발자 모드용 인증된 HTTP 전송
 - [ ] **v0.4** PR 파이프라인: Codex 1차 리뷰 → 위험한 diff 만 Claude 로 에스컬레이션
 - [ ] **v0.5** 라우팅 품질 측정: 작업별 소요 토큰·재작업률을 기록해 규칙 자동 조정

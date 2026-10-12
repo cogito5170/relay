@@ -10,7 +10,7 @@ from pathlib import Path
 
 from relay import config as cfg
 from relay import pack as packmod
-from relay import attribution, doctor, events, hooks, mcp_server, router, statusline, tasks, usage
+from relay import attribution, doctor, events, hooks, pipeline, mcp_server, router, statusline, tasks, usage
 from relay.tokens import estimate, human
 
 BASELINE = Path.home() / ".relay" / "baseline.json"
@@ -279,6 +279,44 @@ def cmd_doctor(args) -> int:
     return 0
 
 
+def cmd_run(args) -> int:
+    root = cfg.find_root()
+    conf = cfg.load(root)
+    task = tasks.resolve(root, args.task)
+    if args.verify is not None:
+        conf["pipeline"]["verify"] = args.verify
+    stages = args.only or [s for s in pipeline.STAGES if s not in (args.skip or [])]
+    for name in args.redo or []:
+        (task / f"{name}.md").unlink(missing_ok=True)
+    if args.dry_run:
+        for stage in ("explore", "implement", "review"):
+            try:
+                runner = pipeline.pick_runner(conf["runners"][stage])
+                print(f"{stage:<10} {' '.join(runner)[:110]}")
+            except pipeline.RunnerMissing as e:
+                print(f"{stage:<10} ✗ {e}")
+        print(f"{'verify':<10} {conf['pipeline']['verify'] or '(미설정)'}")
+        return 0
+    print(f"relay run {task.name} — stages: {' → '.join(stages)}")
+    report = pipeline.Pipeline(root, task, conf).run(stages, args.max_iterations or conf["pipeline"]["max_iterations"])
+    c = report.claude_tokens
+    if c:
+        ctx = c.get("input_tokens", 0) + c.get("cache_creation_input_tokens", 0) + c.get("cache_read_input_tokens", 0)
+        print(f"\nClaude 사용: {c.get('turns', 0)}턴 · 컨텍스트 {human(ctx)} · 출력 {human(c.get('output_tokens', 0))}")
+    print(f"결과: {report.verdict or '-'} (iterations {report.iterations}) → {(task / 'run.json').relative_to(root)}")
+    return 0 if report.verdict in ("APPROVE", "") else 2
+
+
+def cmd_lean(args) -> int:
+    root = cfg.find_root()
+    extra = args.extra[1:] if args.extra[:1] == ["--"] else args.extra
+    argv = pipeline.lean_argv(cfg.load(root), root, extra)
+    if args.print:
+        print(" ".join(argv))
+        return 0
+    return pipeline.exec_lean(cfg.load(root), root, extra)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="relay", description="ChatGPT · Antigravity · Claude 토큰 효율 워크플로우")
     sub = p.add_subparsers(dest="command", required=True)
@@ -366,6 +404,21 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("hook", help="Claude Code hook 진입점 (stdin JSON)")
     s.add_argument("event", choices=["prompt", "pretool"])
     s.set_defaults(func=lambda a: hooks.main(a.event))
+
+    s = sub.add_parser("run", help="파이프라인: explore(Gemini) → pack → implement(Codex) → verify → review(Claude lean)")
+    s.add_argument("task", nargs="?")
+    s.add_argument("--only", nargs="+", choices=pipeline.STAGES, help="이 단계만 실행")
+    s.add_argument("--skip", nargs="+", choices=pipeline.STAGES)
+    s.add_argument("--redo", nargs="+", choices=["explore", "pack"], help="기존 산출물을 지우고 다시")
+    s.add_argument("--verify", help="테스트 명령 (config 의 pipeline.verify 대신)")
+    s.add_argument("--max-iterations", type=int)
+    s.add_argument("--dry-run", action="store_true", help="어떤 러너가 쓰일지만 출력")
+    s.set_defaults(func=cmd_run)
+
+    s = sub.add_parser("lean", help="도구를 줄인 대화형 Claude 실행 (base 약 -78%)")
+    s.add_argument("--print", action="store_true", help="실행할 명령만 출력")
+    s.add_argument("extra", nargs=argparse.REMAINDER, help="claude 에 그대로 넘길 인자 (-- 뒤에)")
+    s.set_defaults(func=cmd_lean)
 
     s = sub.add_parser("statusline", help="Claude Code statusline (stdin JSON)")
     s.set_defaults(func=lambda a: statusline.main())

@@ -1,0 +1,116 @@
+import copy
+import json
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+from relay import config, pipeline, tasks
+
+EXPLORE_STUB = """import sys
+print("## Summary\\nentry point\\n## Key locations\\n- app.py:1-2 — handler\\n## Risks\\nnone")
+"""
+IMPLEMENT_STUB = """import sys, pathlib
+prompt = sys.stdin.read()
+p = pathlib.Path("app.py")
+p.write_text(p.read_text() + ("# fixed per review\\n" if "Reviewer requested" in prompt else "# implemented\\n"))
+print("changed app.py:3")
+"""
+REVIEW_STUB = """import sys, json, pathlib
+counter = pathlib.Path(".review_count")
+n = int(counter.read_text()) if counter.exists() else 0
+counter.write_text(str(n + 1))
+prompt = sys.argv[1]
+assert "# implemented" in prompt and "PASS" in prompt, prompt
+text = "VERDICT: CHANGES\\n1. app.py:3 add a comment" if n == 0 else "VERDICT: APPROVE"
+print(json.dumps({"result": text, "num_turns": 1, "usage": {"input_tokens": 5,
+      "cache_creation_input_tokens": 3000, "cache_read_input_tokens": 1000, "output_tokens": 40}}))
+"""
+
+
+def git(root, *args):
+    subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+
+
+class PipelineTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name).resolve()
+        self.bin = self.root.parent / (self.root.name + "-bin")
+        self.bin.mkdir()
+        self.addCleanup(lambda: [p.unlink() for p in self.bin.iterdir()] and None or self.bin.rmdir())
+        for name, body in (("explore.py", EXPLORE_STUB), ("implement.py", IMPLEMENT_STUB), ("review.py", REVIEW_STUB)):
+            (self.bin / name).write_text(body)
+        git(self.root, "init", "-q")
+        git(self.root, "config", "user.email", "t@t")
+        git(self.root, "config", "user.name", "t")
+        (self.root / "app.py").write_text("def handler(event):\n    return event\n")
+        (self.root / ".gitignore").write_text(".review_count\n")
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-qm", "init")
+        tasks.scaffold(self.root)
+        self.task = tasks.create(self.root, "handler 개선", "codex")
+        self.conf = copy.deepcopy(config.DEFAULTS)
+        py = sys.executable
+        self.conf["runners"] = {
+            "explore": [["missing-gemini-xyz", "-p", "{prompt}"], [py, str(self.bin / "explore.py"), "{prompt}"]],
+            "implement": [[py, str(self.bin / "implement.py")]],          # stdin 으로 프롬프트
+            "review": [[py, str(self.bin / "review.py"), "{prompt}", "--model", "{review_model}"]],
+        }
+        self.conf["pipeline"]["verify"] = f'{py} -c "print(\'ok\')"'
+        self.logs = []
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_full_loop_with_review_feedback(self):
+        report = pipeline.Pipeline(self.root, self.task, self.conf, log=self.logs.append).run(list(pipeline.STAGES), 3)
+        self.assertEqual(report.verdict, "APPROVE")
+        self.assertEqual(report.iterations, 2)
+        self.assertIn("# fixed per review", (self.root / "app.py").read_text())
+        self.assertIn("app.py:1-2", (self.task / "explore.md").read_text())
+        self.assertIn("def handler", (self.task / "pack.md").read_text())
+        self.assertIn("PASS", (self.task / "verify.md").read_text())
+        self.assertEqual(report.claude_tokens["cache_creation_input_tokens"], 6000)
+        run = json.loads((self.task / "run.json").read_text())
+        self.assertEqual(run["verdict"], "APPROVE")
+        explore = [s for s in report.stages if s.stage == "explore"][0]
+        self.assertTrue(explore.runner.endswith("python3") or "python" in explore.runner)  # fallback 사용
+
+    def test_explore_skipped_when_report_exists_and_missing_runner(self):
+        (self.task / "explore.md").write_text("- app.py:1-1")
+        self.conf["runners"]["implement"] = [["missing-codex-xyz", "exec"]]
+        report = pipeline.Pipeline(self.root, self.task, self.conf, log=self.logs.append).run(list(pipeline.STAGES), 2)
+        statuses = {s.stage: s.status for s in report.stages}
+        self.assertEqual(statuses["explore"], "skipped")
+        self.assertEqual(statuses["implement"], "skipped")
+        self.assertNotIn("review", statuses)  # 구현 실패 시 중단
+
+    def test_helpers(self):
+        self.assertEqual(pipeline.verdict_of("blah\nVERDICT: APPROVE"), "APPROVE")
+        self.assertEqual(pipeline.verdict_of("verdict: changes\n1. x"), "CHANGES")
+        self.assertEqual(pipeline.verdict_of("no verdict"), "UNKNOWN")
+        text, usage = pipeline.parse_claude_json('{"result": "ok", "num_turns": 2, "usage": {"output_tokens": 7}}')
+        self.assertEqual((text, usage["turns"], usage["output_tokens"]), ("ok", 2, 7))
+        self.assertEqual(pipeline.parse_claude_json("plain")[0], "plain")
+        self.assertEqual(pipeline._fill(["a{x}b", "{prompt}"], {"x": 1, "prompt": "P"}), ["a1b", "P"])
+
+    def test_lean_argv(self):
+        conf = copy.deepcopy(config.DEFAULTS)
+        (self.root / ".mcp.json").write_text("{}")
+        argv = pipeline.lean_argv(conf, self.root, ["--model", "sonnet"])
+        self.assertEqual(argv[:3], ["claude", "--tools", "Read,Edit,Write,Bash,Grep,Glob"])
+        self.assertIn("--strict-mcp-config", argv)
+        self.assertIn(str(self.root / ".mcp.json"), argv)
+        self.assertEqual(argv[-2:], ["--model", "sonnet"])
+
+    def test_default_review_runner_is_lean(self):
+        review = config.DEFAULTS["runners"]["review"][0]
+        self.assertIn("--tools", review)
+        self.assertEqual(review[review.index("--tools") + 1], "Read,Grep,Glob")
+        self.assertIn("--system-prompt", review)
+
+
+if __name__ == "__main__":
+    unittest.main()

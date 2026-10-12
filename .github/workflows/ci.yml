@@ -37,3 +37,5 @@ jobs:
           echo '{"tool_name":"Bash","tool_input":{"command":"pytest"},"cwd":"."}' | relay hook pretool | grep -q deny
           relay why || true
           relay doctor
+          relay lean --print | grep -q -- "--tools"
+          relay run --dry-run

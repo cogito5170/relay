@@ -77,6 +77,15 @@ class PackTest(TempDirTest):
         self.assertNotIn("line40", built.render())
         self.assertTrue(any("gone.py" in s for s in built.skipped))
 
+    def test_binary_and_ignored_direct_paths_skipped(self):
+        (self.root / "__pycache__").mkdir()
+        (self.root / "__pycache__" / "m.pyc").write_bytes(b"\0\1binary")
+        (self.root / "data.bin").write_bytes(b"ab\0cd")
+        built = pack.build(self.root, full=["__pycache__/m.pyc", "data.bin"], budget=5000)
+        self.assertEqual(built.sections, [])
+        self.assertTrue(any("바이너리" in s for s in built.skipped))
+        self.assertNotIn("\0", built.render())
+
     def test_glob_ignores_vendor_dirs(self):
         (self.root / "node_modules").mkdir()
         (self.root / "node_modules" / "x.py").write_text("def a(): pass")
