@@ -7,8 +7,8 @@ relay auto "<목표>"
     - 컨텍스트가 auto.handoff_context 를 넘으면 PreToolUse hook 이 state.md 쓰기 외 도구를 막고 마무리를 지시한다.
     - Claude 가 state 를 못 쓰고 끝나면 감독자가 같은 세션을 한 번 resume 해서 state 만 쓰게 한다.
 
-relay delegate codex|gemini "<지시>"
-    Claude(또는 사람)가 구현은 Codex, 탐색은 Gemini 에게 맡긴다. 결과는 마지막 N줄만 돌려주고 전체는 로그 파일에 둔다.
+relay delegate codex|agy "<지시>"
+    Claude(또는 사람)가 구현은 Codex, 탐색은 agy 에게 맡긴다. 결과는 마지막 N줄만 돌려주고 전체는 로그 파일에 둔다.
     → 위임 결과가 Claude 컨텍스트에 쌓이는 양을 제한한다.
 
 relay check [--ping]
