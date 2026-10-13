@@ -23,7 +23,8 @@
 
 - 첫 요청 컨텍스트(고정 부분): 기본 **35.1k** → `--tools` 6개 **7.9k (−78%)** → 리뷰용 3개 + 짧은 system prompt **4.0k (−89%)**. 고정 부분의 대부분은 **기본 도구 설명**이다.
 - `relay run` 리뷰 1회: 대역 스크립트(1턴)로는 **5.5~6.5k**, 실제 작업(sonnet/medium, 3턴)은 **컨텍스트 35.8k · 가중 약 15.6k**. 턴이 늘면 컨텍스트가 매 턴 다시 읽히므로 비용이 턴 수에 비례한다. 기본 대화형은 첫 메시지만 35k.
-- 긴 세션(이 대화) 분해: 고정 48% · 미분류 19% · thinking 13% · Claude 가 쓴 파일 13% · 명령 출력 3%.
+- 긴 세션 분해: 고정 48% · 미분류 19% · thinking 13% · Claude 가 쓴 파일 13% · 명령 출력 3%. CLI 작업 세션(67요청, 재독 2.6M)은 고정 29% · 명령 출력 21% · thinking 18% · 포맷·주입 overhead 20% · 파일 읽기 5%.
+- 미분류였던 몫의 절반 이상은 **thinking** 이다. transcript 의 thinking 블록은 본문이 비어 있고(`signature` 만) `usage.thinking_tokens` 도 0 이라, `relay why` 는 직전 응답의 `output_tokens` 에서 본문·tool_use 로 설명되는 몫을 뺀 나머지를 thinking 으로 돌린다. 남는 20% 는 블록 포맷과 세션 중 주입되는 system-reminder 로, transcript 에 기록이 없어 더는 쪼갤 수 없다.
 - hook 으로 차단된 메시지는 **모델 호출 0회 · 토큰 0**.
 
 ## 결정과 이유
@@ -80,8 +81,8 @@ review_effort = "medium"
 1. ~~Codex CLI · Gemini CLI 로 `relay run` 실제 실행~~ **완료 (2026-10-13).** 측정과 문제는 `docs/pipeline.md` 의 "실측 2" 에 있다. 러너 기본값은 `codex exec --sandbox workspace-write` 로 고쳤고, 러너 실패 시 다음 후보로 재시도하도록 바꿨다.
 2. **`relay lean` 으로 평소 작업을 해 보고** 빠져서 불편한 도구가 있으면 `[lean] tools` 에 추가 (도구 하나 = 고정 부분 증가).
 3. hooks 를 Sonnet / Opus 세션에서도 확인 (Haiku 에서만 확인했다).
-4. `relay why` 의 미분류 19% 분석: 세션 중 주입되는 시스템 메시지 · 도구 정보로 추정, 확인 안 됨.
-5. 리뷰 턴 수 줄이기 실험: 실제 리뷰가 3턴(파일 열기 포함)이면 가중 약 15.6k 다. `--max-turns` 를 4 로 낮추거나 system prompt 에 "턴마다 전체 컨텍스트가 다시 과금된다" 를 넣었을 때 VERDICT 품질이 유지되는지 확인.
+4. ~~`relay why` 의 미분류 분석~~ **완료 (2026-10-13).** thinking 과 포맷·주입 overhead 로 나눠 표시한다 (위 측정값 참고).
+5. 리뷰 턴 수 줄이기 실험: 실제 리뷰가 3턴(파일 열기 포함)이면 가중 약 15.6k 다. 턴당 재과금은 이제 리뷰 system prompt 에 들어가 있고 턴 상한은 `pipeline.review_max_turns` (기본 8) · `relay run --review-max-turns 4` 로 조절한다. **남은 일은 4 턴에서 VERDICT 품질이 유지되는지 실제 작업으로 확인하는 것.**
 6. Gemini explore 의 503 빈도를 보고, 잦으면 `[runners] explore` 의 1순위를 `codex exec --sandbox read-only` 로 바꾼다.
 
 ## 로컬 환경 메모 (이 맥)

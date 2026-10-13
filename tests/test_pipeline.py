@@ -116,6 +116,16 @@ class PipelineTest(unittest.TestCase):
             config.DEFAULTS["runners"]["implement"],
             [["codex", "exec", "--sandbox", "workspace-write", "{prompt}"]],
         )
+
+    def test_review_max_turns_comes_from_config(self):
+        """비용은 턴 수가 지배하므로 --max-turns 는 설정으로 조절할 수 있어야 한다."""
+        review = config.DEFAULTS["runners"]["review"][0]
+        self.assertEqual(review[review.index("--max-turns") + 1], "{review_max_turns}")
+        self.conf["pipeline"]["review_max_turns"] = 4
+        pipe = pipeline.Pipeline(self.root, self.task, self.conf)
+        filled = pipeline._fill(review, pipe.values)
+        self.assertEqual(filled[filled.index("--max-turns") + 1], "4")
+
     def test_agent_falls_back_when_first_runner_fails(self):
         """설치돼 있지만 실패하는 러너 다음 후보로 넘어간다 (Gemini 503 같은 경우)."""
         fail = self.bin / "fail.py"

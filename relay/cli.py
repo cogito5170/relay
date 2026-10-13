@@ -285,16 +285,22 @@ def cmd_run(args) -> int:
     task = tasks.resolve(root, args.task)
     if args.verify is not None:
         conf["pipeline"]["verify"] = args.verify
+    if args.review_max_turns is not None:
+        conf["pipeline"]["review_max_turns"] = args.review_max_turns
+    if args.review_model:
+        conf["pipeline"]["review_model"] = args.review_model
     stages = args.only or [s for s in pipeline.STAGES if s not in (args.skip or [])]
     for name in args.redo or []:
         (task / f"{name}.md").unlink(missing_ok=True)
     if args.dry_run:
+        shown = {k: conf["pipeline"][k] for k in ("review_model", "review_effort", "review_max_turns")}
+        shown["system_prompt"] = "<system prompt>"   # 실제 값은 길어서 줄이 잘린다
         for stage in ("explore", "implement", "review"):
             try:
-                runners = pipeline.installed_runners(conf["runners"][stage])
-                print(f"{stage:<10} {' '.join(runners[0])[:110]}")
+                runners = [pipeline._fill(r, shown) for r in pipeline.installed_runners(conf["runners"][stage])]
+                print(f"{stage:<10} {' '.join(runners[0])[:180]}")
                 for fallback in runners[1:]:
-                    print(f"{'':<10} ↳ 실패 시 {' '.join(fallback)[:100]}")
+                    print(f"{'':<10} ↳ 실패 시 {' '.join(fallback)[:170]}")
             except pipeline.RunnerMissing as e:
                 print(f"{stage:<10} ✗ {e}")
         print(f"{'verify':<10} {conf['pipeline']['verify'] or '(미설정)'}")
@@ -414,6 +420,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--redo", nargs="+", choices=["explore", "pack"], help="기존 산출물을 지우고 다시")
     s.add_argument("--verify", help="테스트 명령 (config 의 pipeline.verify 대신)")
     s.add_argument("--max-iterations", type=int)
+    s.add_argument("--review-max-turns", type=int, help="리뷰 턴 상한 (비용은 턴 수가 지배한다)")
+    s.add_argument("--review-model", help="리뷰 모델 (기본: config 의 pipeline.review_model)")
     s.add_argument("--dry-run", action="store_true", help="어떤 러너가 쓰일지만 출력")
     s.set_defaults(func=cmd_run)
 

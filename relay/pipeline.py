@@ -28,6 +28,8 @@ STAGES = ("explore", "pack", "implement", "verify", "review")
 REVIEW_SYSTEM_PROMPT = (
     "You are the final reviewer in a token-budgeted pipeline. The brief, diff and test results in the "
     "user message are your context; read files only if essential, with narrow line ranges. "
+    "Every assistant turn re-sends the whole conversation, so each extra tool call costs as much as the "
+    "context again: decide from the user message if you can, and batch any reads you truly need into one turn. "
     "Output: first line exactly 'VERDICT: APPROVE' or 'VERDICT: CHANGES'. If CHANGES, a numbered list of "
     "concrete fixes (path:line, what to change), max 200 words. No praise, no summary.")
 
@@ -164,6 +166,7 @@ class Pipeline:
         self.runners = conf["runners"]
         self.report = RunReport(task.name)
         self.values = {"review_model": self.p["review_model"], "review_effort": self.p["review_effort"],
+                       "review_max_turns": self.p["review_max_turns"],
                        "system_prompt": REVIEW_SYSTEM_PROMPT}
 
     # ------------------------------------------------------------ helpers

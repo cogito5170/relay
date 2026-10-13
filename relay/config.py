@@ -35,6 +35,8 @@ DEFAULTS = {
         "review_budget": 15_000,    # review 입력(diff + 새 파일) 최대 토큰
         "review_model": "sonnet",
         "review_effort": "medium",
+        # 리뷰 비용은 턴 수가 지배한다 (실측: 3턴 = 가중 15.6k). 너무 낮추면 VERDICT 가 잘린다.
+        "review_max_turns": 8,
         "timeout": 1800,
     },
     # 단계별 러너 후보 (앞에서부터 설치된 것 사용). {prompt} 가 없으면 stdin 으로 전달.
@@ -44,7 +46,7 @@ DEFAULTS = {
         "implement": [["codex", "exec", "--sandbox", "workspace-write", "{prompt}"]],
         "review": [["claude", "-p", "{prompt}", "--model", "{review_model}", "--effort", "{review_effort}",
                     "--tools", "Read,Grep,Glob", "--strict-mcp-config", "--system-prompt", "{system_prompt}",
-                    "--max-turns", "8", "--output-format", "json"]],
+                    "--max-turns", "{review_max_turns}", "--output-format", "json"]],
     },
     # relay lean — 도구를 줄인 대화형 Claude (실측 base 35.1k → 7.9k)
     "lean": {"tools": "Read,Edit,Write,Bash,Grep,Glob", "strict_mcp": True, "effort": ""},

@@ -48,6 +48,7 @@ cat >> .relay/config.toml <<'EOF'
 verify = "python -m pytest -q"
 review_model = "sonnet"
 review_effort = "medium"
+review_max_turns = 8          # 비용은 턴 수가 지배한다. 낮추면 VERDICT 가 잘릴 수 있다
 EOF
 
 relay task new "calc.add 버그 수정"     # brief.md 작성 (ChatGPT 로 다듬어도 됨)
@@ -55,6 +56,7 @@ relay run --dry-run                     # 어떤 러너가 쓰일지 확인
 relay run                               # 끝까지 실행
 relay run --skip explore pack           # 재구현 · 재리뷰만
 relay run --only review                 # 직접 고친 뒤 리뷰만
+relay run --review-max-turns 4 --review-model opus   # 이번 실행만 리뷰 설정 덮어쓰기
 ```
 
 ### 실측 1 — 대역 스크립트 (explore · implement 를 스텁으로, Claude 리뷰만 실제 실행)
@@ -92,6 +94,7 @@ relay run --only review                 # 직접 고친 뒤 리뷰만
 ### 설계 결정
 
 - **Claude 는 판단만, 매번 새 세션.** 세션 길이의 이차 항이 생기지 않는다. 리뷰 노트(`out-claude.md`)는 Codex 에게 넘어가고 Claude 대화는 쌓이지 않는다.
+- **리뷰 비용은 턴 수가 지배한다.** 턴마다 컨텍스트 전체가 다시 읽히므로, 리뷰 system prompt 에 "턴마다 전체 컨텍스트가 다시 과금되니 읽기는 한 턴에 모아라" 를 명시했다. 상한은 `review_max_turns` (기본 8, `relay run --review-max-turns` 로 덮어쓰기).
 - **리뷰 입력은 diff + 테스트 꼬리.** 저장소 전체가 아니라 바뀐 부분만. `.relay/` 는 diff 에서 제외, 새 파일은 포함하되 바이너리 · `__pycache__` 는 제외, `review_budget` (기본 15k)으로 상한.
 - **러너는 설정.** `[runners]` 에서 후보 목록을 바꿀 수 있다. 설치되지 않은 러너는 다음 후보로, 모두 없으면 그 단계는 건너뛴다 (구현이 없으면 리뷰 전에 멈춘다).
   **실행이 0 이 아닌 코드로 끝나도 다음 후보로 재시도한다** (Gemini 503 같은 일시적 실패). 재시도는 로그에 `[ retry ]` 로 남는다.

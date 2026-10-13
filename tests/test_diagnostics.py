@@ -12,11 +12,11 @@ def line(**kw) -> str:
     return json.dumps(kw)
 
 
-def assistant(mid, ctx, blocks, thinking=0):
+def assistant(mid, ctx, blocks, thinking=0, output=10):
     return line(type="assistant", requestId="r" + mid, message={
         "id": mid, "content": blocks,
         "usage": {"input_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": ctx,
-                  "output_tokens": 10, "output_tokens_details": {"thinking_tokens": thinking}}})
+                  "output_tokens": output, "output_tokens_details": {"thinking_tokens": thinking}}})
 
 
 def tool_result(tid, text):
@@ -58,6 +58,29 @@ class AttributionTest(unittest.TestCase):
         self.assertIn("Write/Edit input", cats)
         self.assertIn("thinking", cats)
         self.assertTrue(r.top(1)[0].label.startswith("Bash cat log"))
+
+    def test_residual_goes_to_thinking_when_transcript_hides_it(self):
+        """thinking 본문도 usage.thinking_tokens 도 없을 때 직전 응답 output 으로 역산한다."""
+        path = self.write([
+            assistant("a", 10_000, [{"type": "thinking", "thinking": "", "signature": "sig"},
+                                    {"type": "text", "text": "ok"}], output=900),
+            assistant("b", 11_000, []),
+        ])
+        r = attribution.analyze(path)
+        cats = dict(r.by_category())
+        self.assertAlmostEqual(cats["thinking"], 900 - 1, delta=5)   # "ok" 2자 ≈ 1 토큰
+        self.assertAlmostEqual(cats["overhead"], 100, delta=5)       # output 으로 설명 안 되는 몫만 남는다
+        self.assertAlmostEqual(sum(i.cost(r.requests) for i in r.items), r.total, delta=1)
+
+    def test_residual_beyond_previous_output_stays_overhead(self):
+        """직전 응답 output 으로 설명되지 않는 증가분은 주입·포맷 overhead 로 남긴다."""
+        path = self.write([
+            assistant("a", 10_000, [], output=100),
+            assistant("b", 15_000, []),
+        ])
+        cats = dict(attribution.analyze(path).by_category())
+        self.assertAlmostEqual(cats["thinking"], 100, delta=1)
+        self.assertAlmostEqual(cats["overhead"], 4_900, delta=1)
 
     def test_compaction_ends_previous_items(self):
         path = self.write([
