@@ -146,6 +146,14 @@ class SupervisorHookTest(unittest.TestCase):
         self.assertIsNone(self.run_hook())        # 이번 메시지는 막지 않는다
         self.assertEqual([Path(r).resolve() for r in self.refreshed], [self.root.resolve()])
 
+    def test_project_without_relay_dir_is_left_alone(self):
+        """.relay 가 없으면 판정을 캐시할 수 없다. 매 프롬프트마다 감시 모델을 부르지 않는다."""
+        import shutil
+        self.cache("CLEAR")
+        shutil.rmtree(self.root / ".relay")
+        self.assertIsNone(self.run_hook())
+        self.assertEqual(self.refreshed, [])
+
     def test_no_refresh_below_soft_context(self):
         small = transcript(self.root / "small.jsonl", [5_000, 9_000])
         out = io.StringIO()

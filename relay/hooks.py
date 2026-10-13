@@ -53,6 +53,8 @@ def supervisor_gate(data: dict, conf: dict, ctx: int) -> dict | None:
     if not sup["enabled"]:
         return None
     root = cfg.find_root(Path(data.get("cwd") or "."))
+    if not (root / ".relay").is_dir():
+        return None          # 판정을 캐시할 곳이 없으면 매 프롬프트마다 감시 모델을 부르게 된다
     cached = supervisor.read_cache(root)
     if not supervisor.is_fresh(cached, sup["max_age"]) and ctx >= sup["soft_context"]:
         supervisor.refresh_in_background(root)
