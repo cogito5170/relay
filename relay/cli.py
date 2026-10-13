@@ -526,7 +526,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--tail", type=int, default=40, help="돌려줄 마지막 줄 수")
     s.set_defaults(func=cmd_delegate)
 
-    s = sub.add_parser("check", help="claude · codex · gemini · agy 설치/응답 진단")
+    s = sub.add_parser("check", help="claude · codex · agy 설치/응답 진단")
     s.add_argument("--ping", action="store_true", help="각 도구에 짧은 요청 1회 (토큰 소량 사용)")
     s.set_defaults(func=cmd_check)
 

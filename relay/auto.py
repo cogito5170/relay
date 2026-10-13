@@ -141,7 +141,7 @@ class Supervisor:
 
 # ---------------------------------------------------------------- delegate
 
-DELEGATE_STAGE = {"codex": "implement", "agy": "explore", "gemini": "explore"}
+DELEGATE_STAGE = {"codex": "implement", "agy": "explore"}
 
 
 class _Rows(list):
@@ -189,8 +189,7 @@ def delegate(root: Path, conf: dict, agent: str, instruction: str, tail: int) ->
 CHECKS = [("claude", ["claude", "--version"], ["claude", "-p", "Reply with exactly: OK", "--model", "haiku",
                                                "--max-turns", "1", "--tools", ""]),
           ("codex", ["codex", "--version"], ["codex", "exec", "--sandbox", "read-only", "Reply with exactly: OK"]),
-          ("agy", ["agy", "--help"], ["agy", "--mode", "plan", "--print", "Reply with exactly: OK"]),
-          ("gemini", ["gemini", "--version"], ["gemini", "-p", "Reply with exactly: OK"])]
+          ("agy", ["agy", "--help"], ["agy", "--mode", "plan", "--print", "Reply with exactly: OK"])]
 
 
 def check(ping: bool, timeout: int = 120, on_row=None) -> list[tuple[str, str, str]]:
@@ -206,8 +205,7 @@ def check(ping: bool, timeout: int = 120, on_row=None) -> list[tuple[str, str, s
             rows.append((name, "✗ 실행 실패", str(e)[:60]))
             continue
         if not ping or not ping_cmd:
-            note = "(relay 기본 러너 아님, 선택)" if name == "gemini" else ""
-            rows.append((name, "✓ 설치됨", f"{version} {note}".strip()))
+            rows.append((name, "✓ 설치됨", version))
             continue
         try:
             p = subprocess.run(ping_cmd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)

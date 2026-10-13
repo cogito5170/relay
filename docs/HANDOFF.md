@@ -45,7 +45,7 @@
 | 대화형 (`relay lean`) | `CLAUDE_CODE_AUTO_COMPACT_WINDOW=80k` → Claude Code 가 스스로 압축하고 계속. 압축 · `/clear` · 새 세션 직후 SessionStart hook 이 현재 task 의 brief/state 를 자동 주입 | 없음 (`/clear` · `/pickup` · `[force]` 불필요) |
 | 목표가 정해진 작업 | `relay auto "<목표>"` : headless 세션을 자동 순환. 컨텍스트 50k 에서 hook 이 state.md 마무리를 강제, 다음 세션이 이어받음. `STATUS: DONE` 에서 종료 | 목표 한 줄 |
 | 위임 | Claude 가 `relay delegate codex|agy "..."` 로 구현·탐색을 맡기고 마지막 40줄만 받음 (전체는 `.relay/delegate/*.log`) | 없음 |
-| 오케스트레이션 점검 | `relay check --ping` : claude · codex · agy (· gemini 선택) 설치 · 로그인 · 응답 확인 | 처음 한 번 |
+| 오케스트레이션 점검 | `relay check --ping` : claude · codex · agy 설치 · 로그인 · 응답 확인 | 처음 한 번 |
 
 실측 (Haiku): 상태 자동 주입 → 새 세션이 `/pickup` 없이 다음 단계를 답함. `relay auto "calc.add 버그 수정"` → 세션 1개 · 11턴 · 29초 만에 수정 · 테스트 통과 · `STATUS: DONE`.
 미검증: 80k 자동 압축의 실제 동작, 여러 세션에 걸친 순환과 50k 마무리 hook 의 실전 발동, `relay delegate` 의 실제 Codex/agy 호출 (클라우드 환경에 미설치 — 로컬에서 `relay check --ping` 후 확인).
