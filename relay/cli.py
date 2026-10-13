@@ -413,7 +413,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("event", choices=["prompt", "pretool"])
     s.set_defaults(func=lambda a: hooks.main(a.event))
 
-    s = sub.add_parser("run", help="파이프라인: explore(Gemini) → pack → implement(Codex) → verify → review(Claude lean)")
+    s = sub.add_parser("run", help="파이프라인: explore(agy) → pack → implement(Codex) → verify → review(Claude lean)")
     s.add_argument("task", nargs="?")
     s.add_argument("--only", nargs="+", choices=pipeline.STAGES, help="이 단계만 실행")
     s.add_argument("--skip", nargs="+", choices=pipeline.STAGES)

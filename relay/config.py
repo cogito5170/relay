@@ -42,7 +42,8 @@ DEFAULTS = {
     },
     # 단계별 러너 후보 (앞에서부터 설치된 것 사용). {prompt} 가 없으면 stdin 으로 전달.
     "runners": {
-        "explore": [["gemini", "-p", "{prompt}"],
+        # agy(Antigravity CLI) 는 plan 모드에서 파일을 읽기만 한다. --print 는 프롬프트를 바로 뒤에 받아야 한다.
+        "explore": [["agy", "--mode", "plan", "--print", "{prompt}"],
                     ["codex", "exec", "--sandbox", "read-only", "{prompt}"]],
         "implement": [["codex", "exec", "--sandbox", "workspace-write", "{prompt}"]],
         "review": [["claude", "-p", "{prompt}", "--model", "{review_model}", "--effort", "{review_effort}",
@@ -57,7 +58,7 @@ DEFAULTS = {
     "route": [
         {
             "agent": "antigravity",
-            "reason": "대용량 컨텍스트 탐색/읽기는 Gemini 쪽 쿼터로 처리",
+            "reason": "대용량 컨텍스트 탐색/읽기는 agy(Antigravity) 쿼터로 처리",
             "keywords": ["explore", "find", "where", "understand", "read", "survey", "map",
                          "탐색", "찾아", "어디", "파악", "분석", "구조", "읽어", "조사"],
         },

@@ -30,13 +30,13 @@ relay lean --print             # 실행할 명령만 확인
 ## 2. `relay run` — 작업 하나를 끝까지
 
 ```
-explore (Gemini CLI) → pack (relay) → implement (Codex) → verify (테스트) → review (Claude lean)
+explore (agy) → pack (relay) → implement (Codex) → verify (테스트) → review (Claude lean)
                                           ↑──────────── VERDICT: CHANGES 면 리뷰 노트를 들고 재구현 ──┘
 ```
 
 | 단계 | 러너 (기본, 앞에서부터 설치된 것) | Claude 토큰 | 산출물 |
 |---|---|---|---|
-| explore | `gemini -p` → `codex exec --sandbox read-only` | 0 | `explore.md` (stdout 을 relay 가 저장, 쓰기 권한 불필요) |
+| explore | `agy --mode plan --print` → `codex exec --sandbox read-only` | 0 | `explore.md` (stdout 을 relay 가 저장, 쓰기 권한 불필요) |
 | pack | relay | 0 | `pack.md` |
 | implement | `codex exec --sandbox workspace-write` | 0 | 코드 변경, `out-codex.md` |
 | verify | `pipeline.verify` 셸 명령 | 0 | `verify.md` (PASS/FAIL + 출력 꼬리 40줄) |
@@ -88,7 +88,7 @@ relay run --review-max-turns 4 --review-model opus   # 이번 실행만 리뷰 �
 | 증상 | 원인 | 대응 |
 |---|---|---|
 | implement 가 "ok" 인데 변경 0 | codex 가 사이드카 `codex-code-mode-host` 를 argv0 디렉터리에서 찾는다. `codex` 만 심볼릭 링크하면 모든 파일·셸 도구가 죽는다 | 두 바이너리를 같은 디렉터리에 링크 (`codex`, `codex-code-mode-host`) |
-| explore 가 76~235초 뒤 `An unexpected critical error occurred:[object Object]` | Gemini API 503 (과부하) 재시도 끝에 프로세스 전체가 죽음 | `_agent` 가 다음 러너 후보(`codex exec --sandbox read-only`)로 자동 재시도 |
+| explore 가 76~235초 뒤 `An unexpected critical error occurred:[object Object]` | Gemini API 503 (과부하) 재시도 끝에 프로세스 전체가 죽음. **이 때문에 explore 1순위를 `gemini` 에서 `agy` 로 바꿨다** | `_agent` 가 다음 러너 후보(`codex exec --sandbox read-only`)로 자동 재시도 |
 | `codex exec --full-auto` 가 exit 2 | codex-cli 0.152 에서 플래그 삭제 | 기본값을 `codex exec --sandbox workspace-write` 로 (exec 의 승인 모드는 기본이 never) |
 
 ### 설계 결정
@@ -97,12 +97,14 @@ relay run --review-max-turns 4 --review-model opus   # 이번 실행만 리뷰 �
 - **리뷰 비용은 턴 수가 지배한다.** 턴마다 컨텍스트 전체가 다시 읽히므로, 리뷰 system prompt 에 "턴마다 전체 컨텍스트가 다시 과금되니 읽기는 한 턴에 모아라" 를 명시했다. 상한은 `review_max_turns` (기본 8, `relay run --review-max-turns` 로 덮어쓰기).
 - **리뷰 입력은 diff + 테스트 꼬리.** 저장소 전체가 아니라 바뀐 부분만. `.relay/` 는 diff 에서 제외, 새 파일은 포함하되 바이너리 · `__pycache__` 는 제외, `review_budget` (기본 15k)으로 상한.
 - **러너는 설정.** `[runners]` 에서 후보 목록을 바꿀 수 있다. 설치되지 않은 러너는 다음 후보로, 모두 없으면 그 단계는 건너뛴다 (구현이 없으면 리뷰 전에 멈춘다).
-  **실행이 0 이 아닌 코드로 끝나도 다음 후보로 재시도한다** (Gemini 503 같은 일시적 실패). 재시도는 로그에 `[ retry ]` 로 남는다.
+  **실행이 0 이 아닌 코드로 끝나도 다음 후보로 재시도한다** (503 같은 일시적 실패). 재시도는 로그에 `[ retry ]` 로 남는다.
 - **모든 단계가 기록된다.** `.relay/tasks/<id>/run.json` (단계별 상태 · 시간 · Claude 사용량), `relay events`.
 
 ### 한계
 
 - 러너 플래그는 CLI 버전마다 바뀐다 (`--full-auto` 는 codex-cli 0.152 에서 사라졌다). 새 환경에서는 첫 실행 전에 `relay run --dry-run` 과 각 CLI 의 `--help` 로 확인한다.
-- Gemini CLI 의 비대화형 실행은 503 으로 통째로 죽는 일이 있다. 재시도 후보가 없으면 explore 가 비고, `pack.md` 가 0 섹션이 된다 (그래도 implement 는 brief 만으로 진행한다 — 위 실측 2 가 그 경우다).
-- Antigravity 는 비대화형 CLI 가 없어 파이프라인에 넣지 않았다. 대화형 탐색은 기존처럼 MCP(`explorer` 프로필)로 쓴다.
+- 탐색 러너가 죽고 재시도 후보도 없으면 explore 가 비고, `pack.md` 가 0 섹션이 된다 (그래도 implement 는 brief 만으로 진행한다 — 위 실측 2 가 그 경우다).
+- `agy` 는 `--print` 가 프롬프트를 바로 뒤 인자로 받는다. `--mode plan` 을 `--print` 뒤에 두면 모드 이름이 프롬프트로 먹힌다. 파일은 읽고 쓰기는 하지 않는 plan 모드로 돌린다.
+- Gemini API 는 쓰지 않는다 (503 빈발). `gemini -p` 는 기본 후보에서 빠졌다. 필요하면 `[runners] explore` 에 다시 넣을 수 있다.
+- Antigravity 는 `agy --print` 로 비대화형 실행이 되어 explore 1순위로 넣었다 (plan 모드, 2026-10-13 확인). 대화형 탐색은 기존처럼 MCP(`explorer` 프로필)로도 쓴다.
 - ChatGPT 웹은 자동화할 수 없다. 같은 구독의 Codex CLI 가 GPT 쪽 자동화를 맡는다.

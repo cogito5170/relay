@@ -54,7 +54,7 @@ class PipelineTest(unittest.TestCase):
         self.conf = copy.deepcopy(config.DEFAULTS)
         py = sys.executable
         self.conf["runners"] = {
-            "explore": [["missing-gemini-xyz", "-p", "{prompt}"], [py, str(self.bin / "explore.py"), "{prompt}"]],
+            "explore": [["missing-explorer-xyz", "-p", "{prompt}"], [py, str(self.bin / "explore.py"), "{prompt}"]],
             "implement": [[py, str(self.bin / "implement.py")]],          # stdin 으로 프롬프트
             "review": [[py, str(self.bin / "review.py"), "{prompt}", "--model", "{review_model}"]],
         }
@@ -117,6 +117,14 @@ class PipelineTest(unittest.TestCase):
             [["codex", "exec", "--sandbox", "workspace-write", "{prompt}"]],
         )
 
+    def test_default_explore_runners_are_agy_then_codex(self):
+        """Gemini API 는 쓰지 않는다. 탐색은 agy(plan 모드) 우선, 실패하면 codex read-only."""
+        explore = config.DEFAULTS["runners"]["explore"]
+        self.assertEqual([c[0] for c in explore], ["agy", "codex"])
+        self.assertEqual(explore[0], ["agy", "--mode", "plan", "--print", "{prompt}"])
+        self.assertEqual(explore[0][-2:], ["--print", "{prompt}"])   # --print 는 프롬프트를 바로 뒤에 받는다
+        self.assertEqual(explore[1], ["codex", "exec", "--sandbox", "read-only", "{prompt}"])
+
     def test_review_max_turns_comes_from_config(self):
         """비용은 턴 수가 지배하므로 --max-turns 는 설정으로 조절할 수 있어야 한다."""
         review = config.DEFAULTS["runners"]["review"][0]
@@ -127,7 +135,7 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(filled[filled.index("--max-turns") + 1], "4")
 
     def test_agent_falls_back_when_first_runner_fails(self):
-        """설치돼 있지만 실패하는 러너 다음 후보로 넘어간다 (Gemini 503 같은 경우)."""
+        """설치돼 있지만 실패하는 러너 다음 후보로 넘어간다 (탐색 CLI 가 503 으로 죽는 경우)."""
         fail = self.bin / "fail.py"
         fail.write_text("import sys; sys.stderr.write('503 overloaded\\n'); sys.exit(1)\n")
         py = sys.executable

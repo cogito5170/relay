@@ -27,8 +27,14 @@
 - `relay init` 산출물(`.relay/`, `.claude/`, `.agent/`, `AGENTS.md`, `CLAUDE.md`)은 머신마다 달라 git 에서 제외한다.
 - 이 저장소에는 가상환경이 없어 `.venv` 를 만들어 `pytest` 를 설치했다 (`.gitignore` 에 이미 있다). 실행은 `.venv/bin/python3 -m pytest tests/ -q`.
 
+## 이어서 한 일 (같은 날)
+
+6. 읽기 범위 상한을 가드에 넣었다 (커밋 `9cd9353`). `hooks.read_max_range` (기본 120줄) 를 넘는 Read `limit`, `sed -n 'A,Bp'`, `head -n N`, `tail -n N` 을 거부하고 "Grep 으로 위치를 찾고 120줄 이하로 좁혀서 읽으세요" 로 안내한다. 범위 플래그가 있으면 `LIMITERS` 가 통과시키므로 `range_guard` 는 그 검사보다 먼저 돈다. `relay why` 에서 `sed -n '120,320p'` 한 번이 143k (5.4%) 였던 게 계기다.
+7. **Gemini API 를 쓰지 않기로 했다.** explore 1순위를 `agy --mode plan --print` (Antigravity CLI) 로 바꾸고, 실패하면 `codex exec --sandbox read-only` 로 넘어간다. `agy --print` 는 프롬프트를 바로 뒤 인자로 받으므로 `--mode plan` 을 앞에 둬야 한다 (뒤에 두면 모드 이름이 프롬프트로 먹힌다). plan 모드에서 파일 읽기가 비대화형으로 동작하는 것을 확인했다 (rc=0).
+
 ## 다음 단계
 
 1. `--review-max-turns 4` 로 실제 작업을 리뷰해 VERDICT 가 잘리지 않는지 확인 (잘리면 6 으로).
-2. Gemini 503 이 잦으면 explore 1순위를 `codex exec --sandbox read-only` 로 교체.
+2. `relay run` 을 agy explore 로 한 번 끝까지 돌려 `explore.md` 품질 확인.
 3. `relay lean` 상시 사용, hooks 를 Sonnet/Opus 세션에서 확인.
+4. 남은 가드 구멍: `Read(offset만, limit 없음)` · `awk 'NR>=A&&NR<=B'` · `grep -A/-B/-C N` 은 아직 통과한다. hooks 는 `effiency/.claude/settings.local.json` 에만 있어 `/Users/cogito` 에서 시작한 세션에는 적용되지 않는다 (전역 `~/.claude/settings.json` 설치 검토).

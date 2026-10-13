@@ -1,13 +1,13 @@
 """토큰 절감 파이프라인 (`relay run`) 과 lean 모드 (`relay lean`).
 
-    explore (Gemini CLI) → pack (relay, 0 tok) → implement (Codex) → verify (테스트) → review (Claude lean)
+    explore (agy) → pack (relay, 0 tok) → implement (Codex) → verify (테스트) → review (Claude lean)
                                                      ↑__________ CHANGES 이면 리뷰 노트를 들고 재구현 ___|
 
 Claude 토큰을 아끼는 장치
 - Claude 는 review 단계에서만, 매번 **새 세션**으로 짧게 실행된다 → 세션 길이의 이차 항이 없다.
 - review 세션은 도구를 Read/Grep/Glob 로 제한하고 짧은 system prompt 를 쓴다.
   실측(claude -p, Haiku): 기본 35.1k → 도구 제한 6.1k → + 짧은 system prompt 4.0k (-89%).
-- review 입력은 brief + git diff + 테스트 결과 꼬리만. 저장소 탐색은 Gemini 가 이미 했다.
+- review 입력은 brief + git diff + 테스트 결과 꼬리만. 저장소 탐색은 agy 가 이미 했다.
 - 각 단계 러너는 config 로 바꿀 수 있고, 설치되지 않은 러너는 다음 후보로 넘어간다.
 """
 
@@ -194,7 +194,7 @@ class Pipeline:
     def _agent(self, stage: str, prompt: str) -> tuple[StageResult, str]:
         """설치된 러너 후보를 순서대로 시도한다. 실패하면 다음 후보로 넘어간다.
 
-        Gemini CLI 는 과부하(503)나 내부 오류로 비대화형 실행이 통째로 죽는 일이 있다.
+        탐색 CLI 는 과부하(503)나 내부 오류로 비대화형 실행이 통째로 죽는 일이 있다.
         그때 explore 를 건너뛰면 pack 이 비어서 다음 단계 품질이 떨어지므로 다음 후보(codex read-only)로 넘긴다.
         """
         started = time.monotonic()

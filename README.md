@@ -12,7 +12,7 @@
 |---|---|---|
 | Claude 플랜 | Max 5x | Pro (Max 5x 대비 사용량 약 1/5) |
 | 추가 구독 | ChatGPT Plus | 그대로 유지 (Codex CLI 포함) |
-| 무료/저비용 | Antigravity (Gemini) | 탐색·대량 읽기 전담 |
+| 무료/저비용 | Antigravity (`agy`) | 탐색·대량 읽기 전담 |
 | 요구 효율 | 1x | **Claude 기준 5x** |
 
 ### 측정해 보니 — 토큰의 93% 가 cache read
@@ -84,7 +84,7 @@ v0.2 부터는 Claude Code · Codex · Antigravity 가 이 폴더를 **relay MCP
 | 도구 | 맡는 일 | 이유 |
 |---|---|---|
 | **ChatGPT** (웹 / 앱) | 아이디어 → brief, 리서치, 문서, 2차 리뷰 | 대화형 작업은 Claude 토큰을 0 쓴다 |
-| **Antigravity** (Gemini) | 저장소 탐색, 큰 파일 읽기, 구조 파악, 브라우저 테스트 | 컨텍스트를 가장 많이 먹는 일을 별도 쿼터로 |
+| **Antigravity** (`agy`) | 저장소 탐색, 큰 파일 읽기, 구조 파악, 브라우저 테스트 | 컨텍스트를 가장 많이 먹는 일을 별도 쿼터로 |
 | **Codex CLI** (ChatGPT Plus) | 보일러플레이트, 테스트 작성, 반복 리팩터링 | 규칙이 명확한 구현은 어느 모델이 해도 비슷하다 |
 | **Claude** (Pro) | 설계 결정, 원인 불명 버그, 보안·동시성, 최종 리뷰 | 비싼 토큰은 판단이 필요한 곳에만 |
 
@@ -121,7 +121,7 @@ Claude      › /pickup 003                      → relay_task_read (brief+stat
 
 ```bash
 relay lean      # 대화형 Claude 를 도구 6개로: 첫 요청 컨텍스트 35.1k → 7.9k (−78%), 모든 요청에 적용
-relay run       # explore(Gemini) → pack → implement(Codex) → verify → review(Claude lean, 1턴 ≈ 6k)
+relay run       # explore(agy) → pack → implement(Codex) → verify → review(Claude lean, 1턴 ≈ 6k)
 ```
 
 하루 단위 운영법은 [docs/playbook.md](docs/playbook.md). 새 세션은 [docs/HANDOFF.md](docs/HANDOFF.md) 부터 (Pro 30일 운용 계획).
@@ -165,7 +165,7 @@ relay run       # explore(Gemini) → pack → implement(Codex) → verify → r
 - [x] **v0.1** 파일 프로토콜 · CLI · 사용량 관측 · statusline · CI
 - [x] **v0.2** relay MCP 서버: 세 도구가 task/pack 을 도구 호출로 직접 읽고 씀 (복붙 제거) · 프로필별 최소 권한 · 감사 로그 → [docs/mcp.md](docs/mcp.md)
 - [x] **v0.3** 측정 → 강제: `relay why` (캐시 읽기 원인 분해), `relay doctor` (고정 부분), hooks (세션 한도 · 출력 가드)
-- [x] **v0.4** `relay run` 파이프라인 (Gemini → Codex → Claude lean 리뷰 루프) · `relay lean`
+- [x] **v0.4** `relay run` 파이프라인 (agy → Codex → Claude lean 리뷰 루프) · `relay lean`
 - [ ] ChatGPT 개발자 모드용 인증된 HTTP 전송
 - [ ] **v0.4** PR 파이프라인: Codex 1차 리뷰 → 위험한 diff 만 Claude 로 에스컬레이션
 - [ ] **v0.5** 라우팅 품질 측정: 작업별 소요 토큰·재작업률을 기록해 규칙 자동 조정
