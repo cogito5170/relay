@@ -66,13 +66,14 @@ class HooksTest(unittest.TestCase):
                    "cat small.py", "ls", "npm test > out.txt"):
             self.assertIsNone(self.pretool("Bash", command=ok), ok)
 
-    def test_write_guard_is_opt_in(self):
+    def test_write_guard_on_by_default_for_pro(self):
         content = "y" * 40_000
-        self.assertIsNone(self.pretool("Write", file_path="a.md", content=content))
-        (self.dir / ".relay" / "config.toml").write_text(
-            '[hooks]\nenabled = ["write_guard"]\nwrite_max_tokens = 1000\n')
         self.assertIsNotNone(self.pretool("Write", file_path="a.md", content=content))
         self.assertIsNone(self.pretool("Write", file_path="a.md", content="short"))
+        (self.dir / ".relay" / "config.toml").write_text('[hooks]
+enabled = ["read_guard"]
+')
+        self.assertIsNone(self.pretool("Write", file_path="a.md", content=content))
 
     def test_denials_are_logged_with_avoided_tokens(self):
         self.pretool("Read", file_path="big.py")

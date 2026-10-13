@@ -7,18 +7,18 @@ from pathlib import Path
 DEFAULTS = {
     "budget": {
         # statusline 경고 기준: 마지막 요청의 컨텍스트 크기(토큰)
-        "warn_context": 60_000,
-        "max_context": 100_000,
+        "warn_context": 40_000,
+        "max_context": 60_000,
         # 한 세션에서 이 요청 수를 넘기면 /handoff → /clear 권장
-        "warn_requests": 40,
+        "warn_requests": 30,
         # relay pack 기본 예산
         "pack_tokens": 12_000,
     },
     # relay hook (Claude Code hooks) — relay init --hooks 로 설치
     "hooks": {
-        "enabled": ["prompt_gate", "read_guard", "bash_guard"],  # write_guard 는 선택
-        "gate_context": 100_000,   # 마지막 요청 컨텍스트가 이 이상이면 새 메시지 차단
-        "gate_requests": 80,       # 세션 요청 수가 이 이상이면 차단
+        "enabled": ["prompt_gate", "read_guard", "bash_guard", "write_guard"],  # Claude Pro 기준
+        "gate_context": 60_000,   # 마지막 요청 컨텍스트가 이 이상이면 새 메시지 차단
+        "gate_requests": 50,       # 세션 요청 수가 이 이상이면 차단
         "read_max_lines": 400,     # 이보다 긴 파일은 offset/limit 없이 Read 금지
         "write_max_tokens": 6_000, # write_guard 를 켰을 때 한 번에 쓸 수 있는 최대 토큰
         "noisy_commands": ["pytest", "npm test", "npm run test", "yarn test", "pnpm test", "cargo test",
