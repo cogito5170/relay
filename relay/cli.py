@@ -393,8 +393,9 @@ def cmd_delegate(args) -> int:
 
 
 def cmd_check(args) -> int:
-    for name, status, note in auto.check(args.ping):
-        print(f"{name:<8} {status:<12} {note}")
+    if args.ping:
+        print("각 도구에 짧은 요청을 보냅니다 (도구당 최대 2분)…", flush=True)
+    auto.check(args.ping, on_row=lambda r: print(f"{r[0]:<8} {r[1]:<12} {r[2]}", flush=True))
     if not args.ping:
         print("(실제 응답까지 확인: relay check --ping — 각 도구에 짧은 요청 1회)")
     return 0

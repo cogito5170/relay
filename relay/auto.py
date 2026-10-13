@@ -144,6 +144,19 @@ class Supervisor:
 DELEGATE_STAGE = {"codex": "implement", "agy": "explore", "gemini": "explore"}
 
 
+class _Rows(list):
+    """결과를 모으면서 한 줄씩 바로 알린다 (--ping 은 도구마다 최대 timeout 초가 걸리므로)."""
+
+    def __init__(self, on_row=None):
+        super().__init__()
+        self.on_row = on_row
+
+    def append(self, row):
+        super().append(row)
+        if self.on_row:
+            self.on_row(row)
+
+
 def delegate(root: Path, conf: dict, agent: str, instruction: str, tail: int) -> tuple[int, str]:
     # 요청한 에이전트의 러너를 우선, 설치되어 있지 않으면 같은 단계의 다음 후보
     candidates = sorted(conf["runners"][DELEGATE_STAGE[agent]], key=lambda c: c[0] != agent)
@@ -180,8 +193,8 @@ CHECKS = [("claude", ["claude", "--version"], ["claude", "-p", "Reply with exact
           ("gemini", ["gemini", "--version"], ["gemini", "-p", "Reply with exactly: OK"])]
 
 
-def check(ping: bool, timeout: int = 120) -> list[tuple[str, str, str]]:
-    rows = []
+def check(ping: bool, timeout: int = 120, on_row=None) -> list[tuple[str, str, str]]:
+    rows = _Rows(on_row)
     for name, version_cmd, ping_cmd in CHECKS:
         if not shutil.which(version_cmd[0]):
             rows.append((name, "✗ 미설치", ""))
