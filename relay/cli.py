@@ -293,14 +293,19 @@ def cmd_run(args) -> int:
     for name in args.redo or []:
         (task / f"{name}.md").unlink(missing_ok=True)
     if args.dry_run:
-        shown = {k: conf["pipeline"][k] for k in ("review_model", "review_effort", "review_max_turns")}
+        shown = {k: conf["pipeline"][k] for k in
+                 ("review_model", "review_effort", "review_max_turns", "review_fallback_model")}
         shown["system_prompt"] = "<system prompt>"   # 실제 값은 길어서 줄이 잘린다
+
+        def one_line(argv: list[str], width: int) -> str:
+            return " ".join(argv).replace("\n", " ")[:width]
+
         for stage in ("explore", "implement", "review"):
             try:
                 runners = [pipeline._fill(r, shown) for r in pipeline.installed_runners(conf["runners"][stage])]
-                print(f"{stage:<10} {' '.join(runners[0])[:180]}")
+                print(f"{stage:<10} {one_line(runners[0], 180)}")
                 for fallback in runners[1:]:
-                    print(f"{'':<10} ↳ 실패 시 {' '.join(fallback)[:170]}")
+                    print(f"{'':<10} ↳ 실패 시 {one_line(fallback, 170)}")
             except pipeline.RunnerMissing as e:
                 print(f"{stage:<10} ✗ {e}")
         print(f"{'verify':<10} {conf['pipeline']['verify'] or '(미설정)'}")

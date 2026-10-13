@@ -30,10 +30,13 @@ REVIEW_SYSTEM_PROMPT = (
     "user message are your context; read files only if essential, with narrow line ranges. "
     "Every assistant turn re-sends the whole conversation, so each extra tool call costs as much as the "
     "context again: decide from the user message if you can, and batch any reads you truly need into one turn. "
+    "Do not run shell commands and do not edit files — the diff and test output in the user message are "
+    "authoritative, and a command that needs approval will leave this run with no verdict at all. "
     "Output: first line exactly 'VERDICT: APPROVE' or 'VERDICT: CHANGES'. If CHANGES, a numbered list of "
     "concrete fixes (path:line, what to change), max 200 words. No praise, no summary.")
 
-EXPLORE_PROMPT = """You are exploring a repository for task {task_id}. Do not modify files.
+EXPLORE_PROMPT = """You are exploring a repository for task {task_id}. Do not modify files and do not run
+shell commands (a command that needs approval ends this run with no report); read the files directly.
 Read whatever you need (large context is fine here), then print ONLY this markdown report:
 
 ## Summary
@@ -146,11 +149,22 @@ def parse_claude_json(stdout: str) -> tuple[str, dict]:
 
 
 def verdict_of(text: str) -> str:
+    """첫 줄의 `VERDICT: ...` 를 읽는다. 모델이 `**VERDICT: APPROVE**` 처럼 꾸며도 받아들인다."""
     for line in text.splitlines():
-        line = line.strip().upper()
-        if line.startswith("VERDICT:"):
-            return "APPROVE" if "APPROVE" in line else "CHANGES"
+        line = line.strip().strip("*#`_ ").upper()
+        if "VERDICT:" in line:
+            return "APPROVE" if "APPROVE" in line.split("VERDICT:", 1)[1] else "CHANGES"
     return "UNKNOWN"
+
+
+def workspace_fingerprint(root: Path, base_ref: str) -> str:
+    """작업 트리의 상태 요약. implement 가 실제로 무엇을 바꿨는지 비교할 때 쓴다 (`.relay/` 제외)."""
+    out = []
+    for argv in (["git", "status", "--porcelain", "--untracked-files=all"],
+                 ["git", "diff", "--stat", base_ref, "--", ".", ":(exclude).relay"]):
+        proc = subprocess.run(argv, cwd=root, capture_output=True, text=True, check=False)
+        out += [l for l in proc.stdout.splitlines() if ".relay/" not in l]
+    return "\n".join(out)
 
 
 def untracked_files(root: Path) -> list[str]:
@@ -167,6 +181,7 @@ class Pipeline:
         self.report = RunReport(task.name)
         self.values = {"review_model": self.p["review_model"], "review_effort": self.p["review_effort"],
                        "review_max_turns": self.p["review_max_turns"],
+                       "review_fallback_model": self.p["review_fallback_model"],
                        "system_prompt": REVIEW_SYSTEM_PROMPT}
 
     # ------------------------------------------------------------ helpers
@@ -191,11 +206,14 @@ class Pipeline:
         self.log(f"  [{result.status:^7}] {result.stage:<9} {result.seconds:5.1f}s {result.runner} {result.detail}{extra}")
         return result
 
-    def _agent(self, stage: str, prompt: str) -> tuple[StageResult, str]:
+    def _agent(self, stage: str, prompt: str, accept=None) -> tuple[StageResult, str]:
         """설치된 러너 후보를 순서대로 시도한다. 실패하면 다음 후보로 넘어간다.
 
         탐색 CLI 는 과부하(503)나 내부 오류로 비대화형 실행이 통째로 죽는 일이 있다.
         그때 explore 를 건너뛰면 pack 이 비어서 다음 단계 품질이 떨어지므로 다음 후보(codex read-only)로 넘긴다.
+
+        `accept(out)` 를 주면 종료 코드가 0 이어도 출력이 쓸 수 없으면 다음 후보로 넘어간다
+        (한도 소진 · max-turns 로 잘린 리뷰처럼 "성공했지만 결론이 없는" 경우).
         """
         started = time.monotonic()
         try:
@@ -206,12 +224,17 @@ class Pipeline:
         for index, template in enumerate(candidates):
             rc, out, err = run_command(template, prompt, self.values, self.root, self.p["timeout"])
             result = StageResult(stage, "ok" if rc == 0 else "failed", time.monotonic() - started, template[0])
-            if rc == 0:
+            reason = ""
+            if rc != 0:
+                tail = (err or out).strip().splitlines()
+                reason = tail[-1][:120] if tail else f"exit {rc}"
+            elif accept and not accept(out):
+                result.status, reason = "failed", "결론 없는 출력 (한도 소진 · 턴 잘림 가능)"
+            if not reason:
                 break
-            tail = (err or out).strip().splitlines()
-            result.detail = tail[-1][:120] if tail else f"exit {rc}"
+            result.detail = reason
             if index + 1 < len(candidates):
-                self.log(f"  [{'retry':^7}] {stage:<9} {template[0]} 실패: {result.detail} → {candidates[index + 1][0]} 로 재시도")
+                self.log(f"  [{'retry':^7}] {stage:<9} {template[0]} 실패: {reason} → {candidates[index + 1][0]} 로 재시도")
         return result, out
 
     # ------------------------------------------------------------ stages
@@ -238,9 +261,15 @@ class Pipeline:
         notes = f"\n# Reviewer requested changes (fix these first)\n{review_notes}\n" if review_notes else ""
         prompt = IMPLEMENT_PROMPT.format(task_id=self.task.name, brief=self._read("brief.md", "(no brief)"),
                                          review_notes=notes, pack=self._read("pack.md", "(no pack)"))
+        before = workspace_fingerprint(self.root, self.p["base_ref"])
         result, out = self._agent("implement", prompt)
         if out.strip():
             self._write("out-codex.md", out)
+        if result.status == "ok" and workspace_fingerprint(self.root, self.p["base_ref"]) == before:
+            # codex 는 사이드카(codex-code-mode-host)가 없으면 "ok" 로 끝나면서 파일을 하나도 못 고친다.
+            # 리뷰까지 보내면 조용한 실패를 토큰을 써서 발견하게 되므로 여기서 멈춘다.
+            result.status = "failed"
+            result.detail = "변경 0 — 러너가 파일을 고치지 못했습니다 (codex 사이드카 누락 · 권한 거부 확인)"
         return self._record(result)
 
     def verify(self) -> StageResult:
@@ -265,7 +294,7 @@ class Pipeline:
             diff_text = diff_text[: self.p["review_budget"] * 4] + "\n…(truncated to review_budget)"
         prompt = REVIEW_PROMPT.format(task_id=self.task.name, brief=self._read("brief.md", "(no brief)"),
                                       verify=self._read("verify.md", "(not run)"), diff=diff_text)
-        result, out = self._agent("review", prompt)
+        result, out = self._agent("review", prompt, accept=lambda o: verdict_of(parse_claude_json(o)[0]) != "UNKNOWN")
         text, usage = parse_claude_json(out)
         result.claude = usage
         if text:

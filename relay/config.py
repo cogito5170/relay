@@ -38,6 +38,8 @@ DEFAULTS = {
         "review_effort": "medium",
         # 리뷰 비용은 턴 수가 지배한다 (실측: 3턴 = 가중 15.6k). 너무 낮추면 VERDICT 가 잘린다.
         "review_max_turns": 8,
+        # Claude 가 실패하거나 결론 없이 끝나면 쓰는 agy 모델 (agy models 로 목록 확인)
+        "review_fallback_model": "claude-opus-5-5-medium",
         "timeout": 1800,
     },
     # 단계별 러너 후보 (앞에서부터 설치된 것 사용). {prompt} 가 없으면 stdin 으로 전달.
@@ -48,7 +50,11 @@ DEFAULTS = {
         "implement": [["codex", "exec", "--sandbox", "workspace-write", "{prompt}"]],
         "review": [["claude", "-p", "{prompt}", "--model", "{review_model}", "--effort", "{review_effort}",
                     "--tools", "Read,Grep,Glob", "--strict-mcp-config", "--system-prompt", "{system_prompt}",
-                    "--max-turns", "{review_max_turns}", "--output-format", "json"]],
+                    "--max-turns", "{review_max_turns}", "--output-format", "json"],
+                   # Claude 한도가 소진되면 같은 급 판단을 agy(Antigravity) 쿼터에서 받는다.
+                   # agy 에는 --system-prompt 가 없어 프롬프트 앞에 붙인다. plan 모드라 파일은 읽기만 한다.
+                   ["agy", "--mode", "plan", "--model", "{review_fallback_model}",
+                    "--print", "{system_prompt}\n\n{prompt}"]],
     },
     # relay lean — 도구를 줄인 대화형 Claude (실측 base 35.1k → 7.9k)
     "lean": {"tools": "Read,Edit,Write,Bash,Grep,Glob", "strict_mcp": True, "effort": ""},

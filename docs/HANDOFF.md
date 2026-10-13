@@ -26,6 +26,8 @@
 - 긴 세션 분해: 고정 48% · 미분류 19% · thinking 13% · Claude 가 쓴 파일 13% · 명령 출력 3%. CLI 작업 세션(67요청, 재독 2.6M)은 고정 29% · 명령 출력 21% · thinking 18% · 포맷·주입 overhead 20% · 파일 읽기 5%.
 - 미분류였던 몫의 절반 이상은 **thinking** 이다. transcript 의 thinking 블록은 본문이 비어 있고(`signature` 만) `usage.thinking_tokens` 도 0 이라, `relay why` 는 직전 응답의 `output_tokens` 에서 본문·tool_use 로 설명되는 몫을 뺀 나머지를 thinking 으로 돌린다. 남는 20% 는 블록 포맷과 세션 중 주입되는 system-reminder 로, transcript 에 기록이 없어 더는 쪼갤 수 없다.
 - hook 으로 차단된 메시지는 **모델 호출 0회 · 토큰 0**.
+- 실제 리뷰 1턴 = 컨텍스트 9.8k · **가중 12.3k** (2026-10-13 측정). 기본값에서 한 `relay run` 의 리뷰 최악값은 16턴 · 가중 약 107k.
+- Claude 한도가 소진되면 리뷰는 `agy --model claude-opus-5-5-medium` 으로 넘어간다 (Claude 토큰 0). 판정이 Claude 와 갈릴 수 있어 차선책으로 본다.
 
 ## 결정과 이유
 

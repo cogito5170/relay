@@ -40,7 +40,7 @@ explore (agy) → pack (relay) → implement (Codex) → verify (테스트) → 
 | pack | relay | 0 | `pack.md` |
 | implement | `codex exec --sandbox workspace-write` | 0 | 코드 변경, `out-codex.md` |
 | verify | `pipeline.verify` 셸 명령 | 0 | `verify.md` (PASS/FAIL + 출력 꼬리 40줄) |
-| review | `claude -p` lean (Read/Grep/Glob, 짧은 system prompt, 새 세션) | **여기만** | `out-claude.md` (`VERDICT: APPROVE / CHANGES`) |
+| review | `claude -p` lean (Read/Grep/Glob, 짧은 system prompt, 새 세션) → `agy --model claude-opus-5-5-medium` | **여기만** (agy 폴백은 0) | `out-claude.md` (`VERDICT: APPROVE / CHANGES`) |
 
 ```bash
 cat >> .relay/config.toml <<'EOF'
@@ -90,6 +90,31 @@ relay run --review-max-turns 4 --review-model opus   # 이번 실행만 리뷰 �
 | implement 가 "ok" 인데 변경 0 | codex 가 사이드카 `codex-code-mode-host` 를 argv0 디렉터리에서 찾는다. `codex` 만 심볼릭 링크하면 모든 파일·셸 도구가 죽는다 | 두 바이너리를 같은 디렉터리에 링크 (`codex`, `codex-code-mode-host`) |
 | explore 가 76~235초 뒤 `An unexpected critical error occurred:[object Object]` | Gemini API 503 (과부하) 재시도 끝에 프로세스 전체가 죽음. **이 때문에 explore 1순위를 `gemini` 에서 `agy` 로 바꿨다** | `_agent` 가 다음 러너 후보(`codex exec --sandbox read-only`)로 자동 재시도 |
 | `codex exec --full-auto` 가 exit 2 | codex-cli 0.152 에서 플래그 삭제 | 기본값을 `codex exec --sandbox workspace-write` 로 (exec 의 승인 모드는 기본이 never) |
+| 리뷰가 "성공"했는데 VERDICT 가 없다 | 한도 소진 메시지 · `--max-turns` 로 잘린 응답도 종료 코드 0 이다 | `_agent(accept=...)` 가 결론 없는 출력을 실패로 보고 다음 후보(agy)로 넘긴다 |
+
+### 실측 3 — 토큰·안정성 검증 (2026-10-13, 임시 저장소 `calc.add` 버그 1개)
+
+| 항목 | 값 |
+|---|---|
+| 실제 Claude 리뷰 1회 (sonnet/medium, 1턴) | 컨텍스트 **9.8k** (`cache_creation 9,823`) · 출력 13 · **가중 12.3k** · 4.5초 |
+| 문서 실측 2 (3턴) | 컨텍스트 35.8k · 가중 15.6k |
+| 한 `relay run` 의 최악값 (기본값 `max_iterations 2` × `review_max_turns 8` = 16턴, 출력 1k/턴 가정) | **가중 약 107k = 1턴의 8.7배** |
+| agy 폴백 리뷰 (claude-opus-5-5-medium, plan 모드) | Claude 토큰 **0** · 12~90초 · 5/5 회 VERDICT 산출 |
+
+검증한 안정성 항목:
+
+| 상황 | 재현 방법 | 결과 |
+|---|---|---|
+| Claude 한도 소진 | PATH 에 `claude` 셰임(종료 0, `"Claude AI usage limit reached"`, VERDICT 없음) | `[ retry ] review claude 실패: 결론 없는 출력 → agy 로 재시도` 후 agy 가 리뷰 완료. 한도 소진이 리뷰 누락으로 이어지지 않는다 |
+| codex 조용한 실패 | PATH 에 `codex` 셰임(종료 0, 변경 0) | `implement failed 변경 0 — 러너가 파일을 고치지 못했습니다` 로 **리뷰 전에 중단**. 토큰 0 으로 발견 |
+| 리뷰 입력 폭주 | 추적 안 되는 80.4k tok 새 파일 추가 | `pack` 이 예산(15k) 초과 섹션을 버려 리뷰 입력 1.3k 유지. 단 **버려진 새 파일은 리뷰어가 못 본다** |
+| agy 승인 대기 교착 | plan 모드에서 셸 명령이 필요한 프롬프트 | `jetski: no output produced — a tool required the "command" ...` 로 빈 출력. 리뷰·탐색 프롬프트에 "셸 명령을 쓰지 말라"를 넣어 5/5 회로 해소. `--sandbox` (plan 없이) 면 명령이 자동 실행되지만 파일 수정도 가능해져 리뷰어에는 쓰지 않는다 |
+| 같은 입력, 다른 판정 | 동일 diff 로 agy 리뷰 반복 | CHANGES → APPROVE 로 갈렸다. agy 폴백은 Claude 대체가 아니라 **한도 소진 시의 차선**으로 본다 |
+
+남은 노출:
+
+- 최악 가중 107k 는 상한일 뿐 하드 캡이 아니다. 누적 토큰으로 런을 끊는 장치는 없다 (`pipeline.run_token_budget` 같은 옵션이 필요하면 추가).
+- agy 는 토큰 사용량을 출력하지 않아 `run.json` 의 `claude` 가 비고, 폴백으로 넘어간 런의 비용은 계측되지 않는다.
 
 ### 설계 결정
 

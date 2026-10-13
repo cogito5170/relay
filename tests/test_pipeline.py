@@ -148,6 +148,41 @@ class PipelineTest(unittest.TestCase):
         self.assertIn("## Key locations", (self.task / "explore.md").read_text())
         self.assertTrue(any("재시도" in line for line in logged))
 
+    def test_implement_with_no_change_is_a_failure(self):
+        """러너가 rc 0 으로 끝나도 작업 트리가 그대로면 실패다 (codex 사이드카 누락의 조용한 실패)."""
+        noop = self.bin / "noop.py"
+        noop.write_text("import sys; sys.stdin.read(); print('ok, nothing to do')\n")
+        self.conf["runners"]["implement"] = [[sys.executable, str(noop)]]
+        pipe = pipeline.Pipeline(self.root, self.task, self.conf, log=self.logs.append)
+        result = pipe.implement()
+        self.assertEqual(result.status, "failed")
+        self.assertIn("변경 0", result.detail)
+
+    def test_review_falls_back_when_verdict_is_missing(self):
+        """rc 0 이지만 VERDICT 가 없으면(한도 소진·턴 잘림) 다음 후보로 넘어간다."""
+        mute = self.bin / "mute.py"
+        mute.write_text("import json; print(json.dumps({'result': 'Claude usage limit reached', 'num_turns': 1}))\n")
+        py = sys.executable
+        self.conf["runners"]["review"] = [[py, str(mute)], [py, str(self.bin / "review.py"), "{prompt}"]]
+        (self.root / "app.py").write_text("def handler(event):\n    return event  # implemented\n")
+        pipe = pipeline.Pipeline(self.root, self.task, self.conf, log=self.logs.append)
+        pipe.verify()
+        result = pipe.review()
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(pipe.report.verdict, "CHANGES")
+        self.assertTrue(any("결론 없는 출력" in line for line in self.logs), self.logs)
+
+    def test_default_review_fallback_is_agy_with_claude_model(self):
+        review = config.DEFAULTS["runners"]["review"]
+        self.assertEqual([c[0] for c in review], ["claude", "agy"])
+        self.assertEqual(review[1][-2], "--print")
+        self.assertIn("{system_prompt}", review[1][-1])      # agy 엔 --system-prompt 가 없다
+        self.assertIn("{prompt}", review[1][-1])
+        self.assertEqual(config.DEFAULTS["pipeline"]["review_fallback_model"], "claude-opus-5-5-medium")
+        pipe = pipeline.Pipeline(self.root, self.task, self.conf)
+        filled = pipeline._fill(review[1], pipe.values)
+        self.assertEqual(filled[filled.index("--model") + 1], "claude-opus-5-5-medium")
+
     def test_installed_runners_skips_missing(self):
         py = sys.executable
         runners = pipeline.installed_runners([["missing-xyz-cli"], [py, "-V"]])
