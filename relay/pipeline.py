@@ -95,7 +95,7 @@ class RunReport:
         return total
 
 
-class RunnerMissing(Exception):
+class RunnerMissing(RuntimeError):
     pass
 
 
@@ -304,5 +304,7 @@ def exec_lean(conf: dict, root: Path, extra: list[str]) -> int:
     argv = lean_argv(conf, root, extra)
     if not shutil.which(argv[0]):
         raise RuntimeError("claude CLI 가 설치되어 있지 않습니다")
+    if conf["lean"].get("compact_window"):
+        os.environ.setdefault("CLAUDE_CODE_AUTO_COMPACT_WINDOW", str(conf["lean"]["compact_window"]))
     os.execvp(argv[0], argv)
     return 0  # pragma: no cover

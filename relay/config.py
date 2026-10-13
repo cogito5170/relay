@@ -17,8 +17,9 @@ DEFAULTS = {
     # relay hook (Claude Code hooks) — relay init --hooks 로 설치
     "hooks": {
         "enabled": ["prompt_gate", "read_guard", "bash_guard", "write_guard"],  # Claude Pro 기준
-        "gate_context": 60_000,   # 마지막 요청 컨텍스트가 이 이상이면 새 메시지 차단
-        "gate_requests": 50,       # 세션 요청 수가 이 이상이면 차단
+        "gate_context": 100_000,  # 최후 방어선. 보통은 lean.compact_window 에서 자동 압축이 먼저 일어난다
+        "gate_requests": 100,     # 최후 방어선
+        "session_inject": ["startup", "clear", "compact"],  # 이때 brief/state 자동 주입
         "read_max_lines": 400,     # 이보다 긴 파일은 offset/limit 없이 Read 금지
         "write_max_tokens": 6_000, # write_guard 를 켰을 때 한 번에 쓸 수 있는 최대 토큰
         "noisy_commands": ["pytest", "npm test", "npm run test", "yarn test", "pnpm test", "cargo test",
@@ -47,7 +48,24 @@ DEFAULTS = {
                     "--max-turns", "8", "--output-format", "json"]],
     },
     # relay lean — 도구를 줄인 대화형 Claude (실측 base 35.1k → 7.9k)
-    "lean": {"tools": "Read,Edit,Write,Bash,Grep,Glob", "strict_mcp": True, "effort": ""},
+    "lean": {"tools": "Read,Edit,Write,Bash,Grep,Glob", "strict_mcp": True, "effort": "",
+             # Claude Code 가 이 크기에서 스스로 대화를 압축하고 계속한다 → 사용자가 /clear 할 필요 없음
+             "compact_window": "80k"},
+    # relay auto — 세션을 자동으로 순환하는 감독자
+    "auto": {
+        "max_chunks": 6,             # 새 세션 최대 개수
+        "chunk_turns": 30,           # 세션 하나의 최대 턴
+        "handoff_context": 50_000,   # 이 컨텍스트에서 hook 이 state.md 마무리를 강제
+        "model": "sonnet",
+        "effort": "medium",
+        "permission_mode": "acceptEdits",   # 신뢰하는 저장소에서만 "bypassPermissions"
+        "allowed_tools": ["Bash(relay delegate:*)", "Bash(relay pack:*)", "Bash(git status:*)",
+                          "Bash(git diff:*)", "Bash(python -m pytest -q:*)"],
+        "timeout": 3600,
+        "command": ["claude", "-p", "{prompt}", "--model", "{model}", "--effort", "{effort}",
+                    "--tools", "{tools}", "--strict-mcp-config", "--max-turns", "{max_turns}",
+                    "--permission-mode", "{permission_mode}", "--output-format", "json"],
+    },
     # API 가격 비율을 "가중 사용량"의 근사치로 쓴다 (input = 1 기준).
     # 구독 한도가 정확히 이 비율로 계산된다는 공식 문서는 없으므로 raw 값과 함께 본다.
     "weights": {"input": 1.0, "cache_write": 1.25, "cache_read": 0.1, "output": 5.0},

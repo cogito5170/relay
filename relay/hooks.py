@@ -12,10 +12,12 @@ CLAUDE.md 의 규칙은 모델이 지킬 수도, 안 지킬 수도 있다. hook 
 """
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
 
+from relay import auto
 from relay import config as cfg
 from relay import events
 from relay.statusline import last_context
@@ -114,7 +116,52 @@ GUARDS = {"Read": ("read_guard", read_guard), "Bash": ("bash_guard", bash_guard)
           "Write": ("write_guard", write_guard)}
 
 
+def auto_wrapup(data: dict, conf: dict) -> dict | None:
+    """relay auto 청크 안에서만: 컨텍스트가 예산을 넘으면 state.md 쓰기 외 모든 도구를 막고 마무리를 지시."""
+    if os.environ.get("RELAY_AUTO") != "1":
+        return None
+    transcript = data.get("transcript_path")
+    if not transcript or not Path(transcript).is_file():
+        return None
+    ctx, _ = last_context(Path(transcript))
+    if ctx < int(os.environ.get("RELAY_HANDOFF_CONTEXT") or conf["auto"]["handoff_context"]):
+        return None
+    cwd = Path(data.get("cwd") or ".")
+    task = auto.current_task(cfg.find_root(cwd))
+    if not task:
+        return None
+    target = auto.state_path(task)
+    path = Path((data.get("tool_input") or {}).get("file_path") or "")
+    path = path if path.is_absolute() else cwd / path
+    if data.get("tool_name") in ("Write", "Edit") and path.resolve() == target.resolve():
+        return None
+    _log(cfg.find_root(cwd), "auto:wrapup", f"ctx={ctx}", 0)
+    return _deny(f"컨텍스트 {human(ctx)} 로 이 세션의 예산에 도달했습니다. 다른 작업을 멈추고 {target} 를 "
+                 f"`STATUS: DONE` 또는 `STATUS: CONTINUE` 첫 줄 + ## Done / ## Decisions / ## Next / ## Files 로 덮어쓴 뒤 "
+                 f"한 줄로 턴을 끝내세요. 다음 세션이 이어받습니다.")
+
+
+def session_start(data: dict, conf: dict) -> dict | None:
+    """새 세션 · /clear · 자동 압축 직후 현재 task 의 brief/state 를 컨텍스트에 자동으로 넣는다 (/pickup 불필요)."""
+    source = data.get("source") or "startup"
+    if source not in conf["hooks"]["session_inject"]:
+        return None
+    task = auto.current_task(cfg.find_root(Path(data.get("cwd") or ".")))
+    if not task:
+        return None
+    parts = [f"## {name}\n{(task / name).read_text(encoding='utf-8')[:3000].strip()}"
+             for name in ("brief.md", "state.md") if (task / name).is_file()]
+    if not parts:
+        return None
+    text = (f"[relay] 현재 작업 {task.name} ({source}). 아래 상태에서 이어서 진행하세요. "
+            f"작업 단위가 끝나면 {task.relative_to(task.parents[2]).as_posix()}/state.md 를 갱신하세요.\n\n" + "\n\n".join(parts))
+    return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}
+
+
 def pre_tool(data: dict, conf: dict) -> dict | None:
+    wrap = auto_wrapup(data, conf)
+    if wrap:
+        return wrap
     rule = GUARDS.get(data.get("tool_name") or "")
     if not rule or rule[0] not in conf["hooks"]["enabled"]:
         return None
@@ -136,6 +183,8 @@ def main(event: str, stdin=sys.stdin, stdout=sys.stdout) -> int:
             result = prompt_gate(data, conf)
         elif event == "pretool":
             result = pre_tool(data, conf)
+        elif event == "session":
+            result = session_start(data, conf)
         else:
             result = None
         if result:
@@ -148,16 +197,21 @@ def main(event: str, stdin=sys.stdin, stdout=sys.stdout) -> int:
 def settings_entries() -> dict:
     return {
         "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "relay hook prompt"}]}],
-        "PreToolUse": [{"matcher": "Read|Bash|Write", "hooks": [{"type": "command", "command": "relay hook pretool"}]}],
+        "PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "relay hook pretool"}]}],
+        "SessionStart": [{"hooks": [{"type": "command", "command": "relay hook session"}]}],
     }
 
 
 def install(settings: dict) -> dict:
-    """settings dict 에 relay hook 을 병합 (이미 있으면 그대로)."""
+    """settings dict 에 relay hook 을 병합 (이미 있으면 matcher 만 최신으로)."""
     hooks = settings.setdefault("hooks", {})
     for event, entries in settings_entries().items():
         current = hooks.setdefault(event, [])
         command = entries[0]["hooks"][0]["command"]
-        if not any(h.get("command") == command for e in current for h in e.get("hooks", [])):
+        existing = [e for e in current if any(h.get("command") == command for h in e.get("hooks", []))]
+        if existing:
+            if "matcher" in entries[0]:
+                existing[0]["matcher"] = entries[0]["matcher"]
+        else:
             current.extend(entries)
     return settings

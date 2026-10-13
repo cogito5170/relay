@@ -45,7 +45,7 @@ class HooksTest(unittest.TestCase):
         self.assertIsNone(self.run_hook("prompt", {"prompt": "계속해 [force]", "transcript_path": str(big)}))
         self.assertIsNone(self.run_hook("prompt", {"prompt": "/handoff 003", "transcript_path": str(big)}))
         self.assertIsNone(self.run_hook("prompt", {"prompt": "계속해", "transcript_path": str(small)}))
-        many = transcript(self.dir / "many.jsonl", 20_000, requests=80)
+        many = transcript(self.dir / "many.jsonl", 20_000, requests=100)
         self.assertEqual(self.run_hook("prompt", {"prompt": "x", "transcript_path": str(many)})["decision"], "block")
 
     def test_read_guard(self):

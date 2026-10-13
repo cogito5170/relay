@@ -10,7 +10,7 @@ from pathlib import Path
 
 from relay import config as cfg
 from relay import pack as packmod
-from relay import attribution, doctor, events, hooks, pipeline, mcp_server, router, statusline, tasks, usage
+from relay import attribution, auto, doctor, events, hooks, pipeline, mcp_server, router, statusline, tasks, usage
 from relay.tokens import estimate, human
 
 BASELINE = Path.home() / ".relay" / "baseline.json"
@@ -57,6 +57,7 @@ def cmd_task(args) -> int:
     if args.action == "new":
         title = " ".join(args.title)
         path = tasks.create(root, title, router.summary(title, conf))
+        auto.set_current(root, path)
         print(f"생성: {path.relative_to(root)}/brief.md")
         print(f"추천: {router.summary(title, conf)}")
         print(f"brief 다듬기: relay handoff {path.name.split('-')[0]} --to chatgpt --copy")
@@ -312,9 +313,46 @@ def cmd_lean(args) -> int:
     extra = args.extra[1:] if args.extra[:1] == ["--"] else args.extra
     argv = pipeline.lean_argv(cfg.load(root), root, extra)
     if args.print:
-        print(" ".join(argv))
+        window = cfg.load(root)["lean"].get("compact_window")
+        print((f"CLAUDE_CODE_AUTO_COMPACT_WINDOW={window} " if window else "") + " ".join(argv))
         return 0
     return pipeline.exec_lean(cfg.load(root), root, extra)
+
+
+def cmd_auto(args) -> int:
+    root = cfg.find_root()
+    conf = cfg.load(root)
+    goal = " ".join(args.goal)
+    if args.task:
+        task = tasks.resolve(root, args.task)
+        goal = goal or task.joinpath("brief.md").read_text(encoding="utf-8")
+    else:
+        if not goal:
+            raise ValueError("목표를 적어 주세요: relay auto \"<목표>\"")
+        task = tasks.create(root, goal[:60], router.summary(goal, conf))
+        (task / "brief.md").write_text(f"# {goal[:60]}\n\n## Goal\n{goal}\n", encoding="utf-8")
+    if args.max_chunks:
+        conf["auto"]["max_chunks"] = args.max_chunks
+    auto.set_current(root, task)
+    print(f"relay auto {task.name} — 최대 {conf['auto']['max_chunks']}개 세션, 세션당 {conf['auto']['chunk_turns']}턴")
+    status = auto.Supervisor(root, task, conf).run(goal)
+    print(f"결과: {status} → {(task / 'state.md').relative_to(root)}, {(task / 'auto.json').relative_to(root)}")
+    return 0 if status == auto.STATUS_DONE else 2
+
+
+def cmd_delegate(args) -> int:
+    root = cfg.find_root()
+    rc, text = auto.delegate(root, cfg.load(root), args.agent, " ".join(args.instruction), args.tail)
+    print(text)
+    return rc
+
+
+def cmd_check(args) -> int:
+    for name, status, note in auto.check(args.ping):
+        print(f"{name:<8} {status:<12} {note}")
+    if not args.ping:
+        print("(실제 응답까지 확인: relay check --ping — 각 도구에 짧은 요청 1회)")
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -402,7 +440,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_doctor)
 
     s = sub.add_parser("hook", help="Claude Code hook 진입점 (stdin JSON)")
-    s.add_argument("event", choices=["prompt", "pretool"])
+    s.add_argument("event", choices=["prompt", "pretool", "session"])
     s.set_defaults(func=lambda a: hooks.main(a.event))
 
     s = sub.add_parser("run", help="파이프라인: explore(Gemini) → pack → implement(Codex) → verify → review(Claude lean)")
@@ -419,6 +457,22 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--print", action="store_true", help="실행할 명령만 출력")
     s.add_argument("extra", nargs=argparse.REMAINDER, help="claude 에 그대로 넘길 인자 (-- 뒤에)")
     s.set_defaults(func=cmd_lean)
+
+    s = sub.add_parser("auto", help="목표 하나로 끝까지: 세션 자동 순환 (사용자 개입 없음)")
+    s.add_argument("goal", nargs="*")
+    s.add_argument("--task", help="기존 task 이어서")
+    s.add_argument("--max-chunks", type=int)
+    s.set_defaults(func=cmd_auto)
+
+    s = sub.add_parser("delegate", help="Codex(구현) / Gemini(탐색)에 위임하고 요약만 출력")
+    s.add_argument("agent", choices=list(auto.DELEGATE_STAGE))
+    s.add_argument("instruction", nargs="+")
+    s.add_argument("--tail", type=int, default=40, help="돌려줄 마지막 줄 수")
+    s.set_defaults(func=cmd_delegate)
+
+    s = sub.add_parser("check", help="claude · codex · gemini · agy 설치/응답 진단")
+    s.add_argument("--ping", action="store_true", help="각 도구에 짧은 요청 1회 (토큰 소량 사용)")
+    s.set_defaults(func=cmd_check)
 
     s = sub.add_parser("statusline", help="Claude Code statusline (stdin JSON)")
     s.set_defaults(func=lambda a: statusline.main())

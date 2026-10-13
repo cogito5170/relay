@@ -5,4 +5,5 @@
 - 파일은 필요한 라인 범위만 읽는다. 저장소 전체 grep/glob 은 pack 에 없을 때만.
 - 독립적인 읽기·명령은 한 응답에 묶어서 요청 수를 줄인다 (요청 1회 = 컨텍스트 전체 재독).
 - 넓은 탐색이 필요해 보이면 직접 하지 말고 "Antigravity 탐색 필요: <질문>" 이라고 말하고 멈춘다.
-- 작업 단위가 끝나면 `/handoff <id>` 를 제안한다.
+- 기계적 구현·테스트 작성은 `relay delegate codex "<구체적 지시>"`, 넓은 탐색은 `relay delegate gemini "<질문>"` 로 맡기고 결과(요약)만 검토한다.
+- 작업 단위가 끝나면 현재 task 의 `state.md` 를 갱신한다 (Done / Decisions / Next / Files). 세션 전환은 자동이다.

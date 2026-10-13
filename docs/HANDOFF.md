@@ -34,6 +34,20 @@
 - **hooks 는 fail-open, MCP 쓰기 권한은 fail-closed**: 생산성 장치는 오류 시 통과, 권한 장치는 오류 시 차단.
 - **ChatGPT 웹 · Antigravity 는 파이프라인 밖**: 비대화형 CLI 가 없다. GPT 쪽 자동화는 Codex CLI, Antigravity 는 MCP `explorer` 프로필로 대화형 탐색.
 
+## v0.5 — 사용자 개입 최소화 (실측 확인)
+
+| 상황 | 동작 | 사용자 할 일 |
+|---|---|---|
+| 대화형 (`relay lean`) | `CLAUDE_CODE_AUTO_COMPACT_WINDOW=80k` → Claude Code 가 스스로 압축하고 계속. 압축 · `/clear` · 새 세션 직후 SessionStart hook 이 현재 task 의 brief/state 를 자동 주입 | 없음 (`/clear` · `/pickup` · `[force]` 불필요) |
+| 목표가 정해진 작업 | `relay auto "<목표>"` : headless 세션을 자동 순환. 컨텍스트 50k 에서 hook 이 state.md 마무리를 강제, 다음 세션이 이어받음. `STATUS: DONE` 에서 종료 | 목표 한 줄 |
+| 위임 | Claude 가 `relay delegate codex|gemini "..."` 로 구현·탐색을 맡기고 마지막 40줄만 받음 (전체는 `.relay/delegate/*.log`) | 없음 |
+| 오케스트레이션 점검 | `relay check --ping` : claude · codex · gemini · agy 설치 · 로그인 · 응답 확인 | 처음 한 번 |
+
+실측 (Haiku): 상태 자동 주입 → 새 세션이 `/pickup` 없이 다음 단계를 답함. `relay auto "calc.add 버그 수정"` → 세션 1개 · 11턴 · 29초 만에 수정 · 테스트 통과 · `STATUS: DONE`.
+미검증: 80k 자동 압축의 실제 동작, 여러 세션에 걸친 순환과 50k 마무리 hook 의 실전 발동, Codex/Gemini 위임 (이 환경에 미설치).
+주의: `relay init` 이 만드는 `.relay/config.toml` 에 이미 `[auto]` · `[lean]` 섹션이 있다. 같은 섹션을 덧붙이지 말고 그 안의 값을 고친다 (TOML 은 섹션 중복 시 오류).
+Antigravity(agy): 비대화형 실행 모드가 확인되지 않아 자동화 대상에서 제외. 대화형 탐색은 MCP `explorer` 프로필로.
+
 ## 30일 운용 계획
 
 Pro 한도는 5시간 단위 사용량과 주간 사용량으로 관리된다. 정확한 토큰 수치는 공개되어 있지 않으므로 **Claude 앱 / Claude Code `/usage` 에 표시되는 % 를 기준**으로 삼는다.
@@ -47,7 +61,7 @@ Pro 한도는 5시간 단위 사용량과 주간 사용량으로 관리된다. �
 | 2~4주차 | 주 1회 `relay usage --days 7` (기준선 대비 weighted x5 이상이 목표). 무거운 작업 유형은 라우팅 규칙에 추가 |
 
 **사용 규칙**
-1. 대화형은 항상 `relay lean`. 세션 하나 = 작업 하나, 끝나면 `/handoff` → `/clear`.
+1. 대화형은 항상 `relay lean` (자동 압축 · 상태 자동 주입). 목표가 정해진 일은 `relay auto`.
 2. 할 일이 정해진 작업은 `relay run`. 리뷰 모델은 기본 Sonnet · effort medium, 사소한 변경은 Haiku, Opus 는 어려운 설계 결정에만.
 3. 탐색은 Antigravity / Gemini, 구현 · 테스트 작성은 Codex, 조사 · 문서는 ChatGPT.
 4. 큰 문서나 반복 코드를 Claude 가 직접 쓰지 않는다 (`write_guard` 켜기 권장).
