@@ -24,7 +24,7 @@ from datetime import datetime
 from pathlib import Path
 
 from relay import events, tasks
-from relay.pipeline import _fill, parse_claude_json, pick_runner
+from relay.pipeline import NO_SHELL_NOTE, REVIEW_SYSTEM_PROMPT, _fill, parse_claude_json, pick_runner
 
 STATUS_DONE, STATUS_CONTINUE = "DONE", "CONTINUE"
 
@@ -37,7 +37,7 @@ CHUNK_PROMPT = """You are working autonomously on relay task {task_id}. No human
 {state}
 
 # How to work
-- Delegate bulk implementation/tests: `relay delegate codex "<precise instructions>"`. Broad repo exploration: `relay delegate gemini "<question>"`. You review and decide.
+- Delegate bulk implementation/tests: `relay delegate codex "<precise instructions>"`. Broad repo exploration: `relay delegate agy "<question>"`. You review and decide.
 - Read files with narrow line ranges. Keep outputs short.
 - When the goal is complete, or relay tells you the budget is reached, overwrite {state_path} with:
   first line `STATUS: DONE` or `STATUS: CONTINUE`, then sections ## Done, ## Decisions, ## Next, ## Files (max 250 words).
@@ -141,16 +141,20 @@ class Supervisor:
 
 # ---------------------------------------------------------------- delegate
 
-DELEGATE_STAGE = {"codex": "implement", "gemini": "explore"}
+DELEGATE_STAGE = {"codex": "implement", "agy": "explore", "gemini": "explore"}
 
 
 def delegate(root: Path, conf: dict, agent: str, instruction: str, tail: int) -> tuple[int, str]:
-    candidates = conf["runners"][DELEGATE_STAGE[agent]]
-    if agent == "gemini":  # explore 후보 중 gemini 를 우선, 없으면 다음 후보
-        candidates = sorted(candidates, key=lambda c: c[0] != "gemini")
+    # 요청한 에이전트의 러너를 우선, 설치되어 있지 않으면 같은 단계의 다음 후보
+    candidates = sorted(conf["runners"][DELEGATE_STAGE[agent]], key=lambda c: c[0] != agent)
     template = pick_runner(candidates)
     uses_arg = any("{prompt}" in a for a in template)
-    argv = _fill(template, {"prompt": instruction})
+    p = conf["pipeline"]
+    values = {"prompt": instruction, "no_shell": NO_SHELL_NOTE, "system_prompt": REVIEW_SYSTEM_PROMPT,
+              "review_model": p["review_model"], "review_effort": p["review_effort"],
+              "review_fallback_model": p.get("review_fallback_model", ""),
+              "implement_fallback_model": p.get("implement_fallback_model", "")}
+    argv = _fill(template, values)
     started = time.monotonic()
     proc = subprocess.run(argv, cwd=root, capture_output=True, text=True, timeout=conf["pipeline"]["timeout"],
                           input=None if uses_arg else instruction, stdin=subprocess.DEVNULL if uses_arg else None)
@@ -172,8 +176,8 @@ def delegate(root: Path, conf: dict, agent: str, instruction: str, tail: int) ->
 CHECKS = [("claude", ["claude", "--version"], ["claude", "-p", "Reply with exactly: OK", "--model", "haiku",
                                                "--max-turns", "1", "--tools", ""]),
           ("codex", ["codex", "--version"], ["codex", "exec", "--sandbox", "read-only", "Reply with exactly: OK"]),
-          ("gemini", ["gemini", "--version"], ["gemini", "-p", "Reply with exactly: OK"]),
-          ("agy", ["agy", "--help"], None)]
+          ("agy", ["agy", "--help"], ["agy", "--mode", "plan", "--print", "Reply with exactly: OK"]),
+          ("gemini", ["gemini", "--version"], ["gemini", "-p", "Reply with exactly: OK"])]
 
 
 def check(ping: bool, timeout: int = 120) -> list[tuple[str, str, str]]:
@@ -189,7 +193,7 @@ def check(ping: bool, timeout: int = 120) -> list[tuple[str, str, str]]:
             rows.append((name, "✗ 실행 실패", str(e)[:60]))
             continue
         if not ping or not ping_cmd:
-            note = "비대화형 모드 없음 → 대화형(MCP explorer)으로만" if name == "agy" else ""
+            note = "(relay 기본 러너 아님, 선택)" if name == "gemini" else ""
             rows.append((name, "✓ 설치됨", f"{version} {note}".strip()))
             continue
         try:

@@ -51,7 +51,22 @@ def render(data: dict, conf: dict) -> str:
         parts.append("⛔ /handoff → /clear")
     elif ctx >= budget["warn_context"]:
         parts.append("⚠ 컨텍스트 큼")
+    verdict = _supervisor_verdict(Path(data.get("cwd") or "."), conf, Path(transcript).stem)
+    if verdict:
+        parts.append(verdict)
     return " · ".join(p for p in parts if p)
+
+
+def _supervisor_verdict(cwd: Path, conf: dict, session: str = "") -> str:
+    """감시자의 캐시된 판정을 상태줄에 붙인다 (파일 읽기만, 모델 호출 없음). 이 세션의 판정만 본다."""
+    from relay import supervisor
+    sup = conf.get("supervisor") or {}
+    if not sup.get("enabled"):
+        return ""
+    cached = supervisor.read_cache(cfg.find_root(cwd), session)
+    if not supervisor.is_fresh(cached, sup.get("max_age", 900)) or cached.get("verdict") in ("", "CONTINUE"):
+        return ""
+    return f"감시자 {cached['verdict']}"
 
 
 def main(stdin=sys.stdin) -> int:

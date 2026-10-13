@@ -48,6 +48,16 @@ class HooksTest(unittest.TestCase):
         many = transcript(self.dir / "many.jsonl", 20_000, requests=100)
         self.assertEqual(self.run_hook("prompt", {"prompt": "x", "transcript_path": str(many)})["decision"], "block")
 
+    def test_prompt_gate_judges_only_the_current_session(self):
+        """/clear 하면 transcript 가 바뀐다. 이전 세션이 커도 새 세션의 첫 메시지는 통과해야 한다."""
+        big = transcript(self.dir / "old.jsonl", 20_000, requests=242)
+        self.assertEqual(self.run_hook("prompt", {"prompt": "x", "transcript_path": str(big)})["decision"], "block")
+        fresh = self.dir / "new.jsonl"
+        fresh.write_text("")                      # /clear 직후: assistant 응답이 아직 없다
+        self.assertIsNone(self.run_hook("prompt", {"prompt": "x", "transcript_path": str(fresh)}))
+        fresh.write_text(json.dumps({"type": "user", "message": {"content": "x"}}) + "\n")
+        self.assertIsNone(self.run_hook("prompt", {"prompt": "x", "transcript_path": str(fresh)}))
+
     def test_read_guard(self):
         denied = self.pretool("Read", file_path=str(self.dir / "big.py"))
         out = denied["hookSpecificOutput"]
@@ -65,6 +75,33 @@ class HooksTest(unittest.TestCase):
         for ok in ("pytest -q", "pytest 2>&1 | tail -n 60", "git log --oneline -5", "git log -n 3",
                    "cat small.py", "ls", "npm test > out.txt"):
             self.assertIsNone(self.pretool("Bash", command=ok), ok)
+
+    def test_read_guard_rejects_wide_line_range(self):
+        limit = config.DEFAULTS["hooks"]["read_max_range"]
+        denied = self.pretool("Read", file_path="big.py", offset=1, limit=limit + 1)
+        reason = denied["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertIn(f"{limit}줄 이하로 좁혀서", reason)
+        self.assertIn("Grep", reason)
+        self.assertIsNone(self.pretool("Read", file_path="big.py", offset=1, limit=limit))
+        self.assertIsNone(self.pretool("Read", file_path="big.py", offset=900))
+
+    def test_bash_guard_rejects_wide_sed_and_head_ranges(self):
+        limit = config.DEFAULTS["hooks"]["read_max_range"]
+        for wide in (f"sed -n '1,{limit + 1}p' big.py", f'sed -n "100,{100 + limit}p" big.py',
+                     f"sed -n 1,{limit + 1}p big.py", f"head -n {limit + 1} big.py",
+                     f"tail -{limit + 1} big.py", f"cat big.py | head -{limit * 3}"):
+            denied = self.pretool("Bash", command=wide)
+            self.assertIsNotNone(denied, wide)
+            self.assertIn("Grep", denied["hookSpecificOutput"]["permissionDecisionReason"])
+        for ok in (f"sed -n '1,{limit}p' big.py", "sed -n '200,260p' big.py", "head -n 40 big.py",
+                   "tail -20 big.py", "pytest 2>&1 | tail -n 60", "git log --oneline -500"):
+            self.assertIsNone(self.pretool("Bash", command=ok), ok)
+
+    def test_read_max_range_can_be_disabled(self):
+        (self.dir / ".relay" / "config.toml").write_text(
+            '[hooks]\nenabled = ["read_guard", "bash_guard"]\nread_max_range = 0\n')
+        self.assertIsNone(self.pretool("Read", file_path="big.py", offset=1, limit=900))
+        self.assertIsNone(self.pretool("Bash", command="sed -n '1,900p' big.py"))
 
     def test_write_guard_on_by_default_for_pro(self):
         content = "y" * 40_000

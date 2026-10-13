@@ -1,13 +1,13 @@
 """토큰 절감 파이프라인 (`relay run`) 과 lean 모드 (`relay lean`).
 
-    explore (Gemini CLI) → pack (relay, 0 tok) → implement (Codex) → verify (테스트) → review (Claude lean)
+    explore (agy) → pack (relay, 0 tok) → implement (Codex) → verify (테스트) → review (Claude lean)
                                                      ↑__________ CHANGES 이면 리뷰 노트를 들고 재구현 ___|
 
 Claude 토큰을 아끼는 장치
 - Claude 는 review 단계에서만, 매번 **새 세션**으로 짧게 실행된다 → 세션 길이의 이차 항이 없다.
 - review 세션은 도구를 Read/Grep/Glob 로 제한하고 짧은 system prompt 를 쓴다.
   실측(claude -p, Haiku): 기본 35.1k → 도구 제한 6.1k → + 짧은 system prompt 4.0k (-89%).
-- review 입력은 brief + git diff + 테스트 결과 꼬리만. 저장소 탐색은 Gemini 가 이미 했다.
+- review 입력은 brief + git diff + 테스트 결과 꼬리만. 저장소 탐색은 agy 가 이미 했다.
 - 각 단계 러너는 config 로 바꿀 수 있고, 설치되지 않은 러너는 다음 후보로 넘어간다.
 """
 
@@ -28,10 +28,15 @@ STAGES = ("explore", "pack", "implement", "verify", "review")
 REVIEW_SYSTEM_PROMPT = (
     "You are the final reviewer in a token-budgeted pipeline. The brief, diff and test results in the "
     "user message are your context; read files only if essential, with narrow line ranges. "
+    "Every assistant turn re-sends the whole conversation, so each extra tool call costs as much as the "
+    "context again: decide from the user message if you can, and batch any reads you truly need into one turn. "
+    "Do not run shell commands and do not edit files — the diff and test output in the user message are "
+    "authoritative, and a command that needs approval will leave this run with no verdict at all. "
     "Output: first line exactly 'VERDICT: APPROVE' or 'VERDICT: CHANGES'. If CHANGES, a numbered list of "
     "concrete fixes (path:line, what to change), max 200 words. No praise, no summary.")
 
-EXPLORE_PROMPT = """You are exploring a repository for task {task_id}. Do not modify files.
+EXPLORE_PROMPT = """You are exploring a repository for task {task_id}. Do not modify files and do not run
+shell commands (a command that needs approval ends this run with no report); read the files directly.
 Read whatever you need (large context is fine here), then print ONLY this markdown report:
 
 ## Summary
@@ -46,7 +51,9 @@ Read whatever you need (large context is fine here), then print ONLY this markdo
 """
 
 IMPLEMENT_PROMPT = """Implement task {task_id} in this repository. Follow AGENTS.md.
-Run the relevant tests before finishing. Finish with a summary (max 150 words): files changed (path:line), checks run, open issues.
+Editing files is what matters: a run that changes nothing is a failure. Run the relevant tests if you can,
+but if a shell command is denied, make the edits anyway and say so — the pipeline runs its own verify command.
+Finish with a summary (max 150 words): files changed (path:line), checks run, open issues.
 
 # Brief
 {brief}
@@ -108,12 +115,17 @@ def _fill(template: list[str], values: dict) -> list[str]:
     return out
 
 
-def pick_runner(candidates: list[list[str]]) -> list[str]:
-    for cmd in candidates:
-        if cmd and shutil.which(cmd[0]):
-            return cmd
+def installed_runners(candidates: list[list[str]]) -> list[list[str]]:
+    """설치된 러너 후보를 설정 순서대로 모두 반환한다 (앞 후보가 실패하면 다음 후보로 넘어간다)."""
+    found = [cmd for cmd in candidates if cmd and shutil.which(cmd[0])]
+    if found:
+        return found
     names = ", ".join(c[0] for c in candidates if c) or "(none)"
     raise RunnerMissing(f"러너가 설치되어 있지 않습니다: {names}")
+
+
+def pick_runner(candidates: list[list[str]]) -> list[str]:
+    return installed_runners(candidates)[0]
 
 
 def run_command(template: list[str], prompt: str, values: dict, cwd: Path, timeout: int) -> tuple[int, str, str]:
@@ -138,12 +150,44 @@ def parse_claude_json(stdout: str) -> tuple[str, dict]:
     return str(data.get("result") or "").strip(), keep
 
 
+# agy 는 헤드리스에서 셸 명령 권한을 물을 수 없어 자동 거부하고, 그 run 은 출력 없이 끝난다
+# (`jetski: no output produced — a tool required the "command" permission`).
+# 그래서 agy 를 쓰는 후보에는 "명령 대신 파일 도구만" 을 프롬프트 앞에 붙인다.
+NO_SHELL_NOTE = ("Do not run shell commands: this run is headless and a command permission request is "
+                 "auto-denied, which ends the run with no output at all. Use file read/write tools only. "
+                 "The pipeline runs the test command itself afterwards.")
+
+# 한도 소진은 보통 종료 코드 0 + 안내 문구로 온다 (claude 의 "usage limit reached",
+# agy 의 "You have exhausted your quota on this model."). 그래야 다음 후보로 넘길 수 있다.
+QUOTA_MARKERS = ("exhausted your quota", "usage limit reached", "quota exceeded", "resource_exhausted",
+                 "rate limit exceeded", "429 too many requests")
+
+
+def quota_exhausted(out: str) -> str:
+    low = out.lower()
+    for marker in QUOTA_MARKERS:
+        if marker in low:
+            return marker
+    return ""
+
+
 def verdict_of(text: str) -> str:
+    """첫 줄의 `VERDICT: ...` 를 읽는다. 모델이 `**VERDICT: APPROVE**` 처럼 꾸며도 받아들인다."""
     for line in text.splitlines():
-        line = line.strip().upper()
-        if line.startswith("VERDICT:"):
-            return "APPROVE" if "APPROVE" in line else "CHANGES"
+        line = line.strip().strip("*#`_ ").upper()
+        if "VERDICT:" in line:
+            return "APPROVE" if "APPROVE" in line.split("VERDICT:", 1)[1] else "CHANGES"
     return "UNKNOWN"
+
+
+def workspace_fingerprint(root: Path, base_ref: str) -> str:
+    """작업 트리의 상태 요약. implement 가 실제로 무엇을 바꿨는지 비교할 때 쓴다 (`.relay/` 제외)."""
+    out = []
+    for argv in (["git", "status", "--porcelain", "--untracked-files=all"],
+                 ["git", "diff", "--stat", base_ref, "--", ".", ":(exclude).relay"]):
+        proc = subprocess.run(argv, cwd=root, capture_output=True, text=True, check=False)
+        out += [l for l in proc.stdout.splitlines() if ".relay/" not in l]
+    return "\n".join(out)
 
 
 def untracked_files(root: Path) -> list[str]:
@@ -159,6 +203,10 @@ class Pipeline:
         self.runners = conf["runners"]
         self.report = RunReport(task.name)
         self.values = {"review_model": self.p["review_model"], "review_effort": self.p["review_effort"],
+                       "review_max_turns": self.p["review_max_turns"],
+                       "review_fallback_model": self.p["review_fallback_model"],
+                       "implement_fallback_model": self.p["implement_fallback_model"],
+                       "no_shell": NO_SHELL_NOTE,
                        "system_prompt": REVIEW_SYSTEM_PROMPT}
 
     # ------------------------------------------------------------ helpers
@@ -183,16 +231,38 @@ class Pipeline:
         self.log(f"  [{result.status:^7}] {result.stage:<9} {result.seconds:5.1f}s {result.runner} {result.detail}{extra}")
         return result
 
-    def _agent(self, stage: str, prompt: str) -> tuple[StageResult, str]:
+    def _agent(self, stage: str, prompt: str, accept=None) -> tuple[StageResult, str]:
+        """설치된 러너 후보를 순서대로 시도한다. 실패하면 다음 후보로 넘어간다.
+
+        탐색 CLI 는 과부하(503)나 내부 오류로 비대화형 실행이 통째로 죽는 일이 있다.
+        그때 explore 를 건너뛰면 pack 이 비어서 다음 단계 품질이 떨어지므로 다음 후보(codex read-only)로 넘긴다.
+
+        `accept(out)` 를 주면 종료 코드가 0 이어도 출력이 쓸 수 없으면 다음 후보로 넘어간다
+        (한도 소진 · max-turns 로 잘린 리뷰처럼 "성공했지만 결론이 없는" 경우).
+        """
         started = time.monotonic()
         try:
-            template = pick_runner(self.runners[stage])
+            candidates = installed_runners(self.runners[stage])
         except RunnerMissing as e:
             return StageResult(stage, "skipped", detail=str(e)), ""
-        rc, out, err = run_command(template, prompt, self.values, self.root, self.p["timeout"])
-        result = StageResult(stage, "ok" if rc == 0 else "failed", time.monotonic() - started, template[0])
-        if rc != 0:
-            result.detail = (err or out).strip().splitlines()[-1][:120] if (err or out).strip() else f"exit {rc}"
+        result, out = StageResult(stage, "failed", runner="-"), ""
+        for index, template in enumerate(candidates):
+            rc, out, err = run_command(template, prompt, self.values, self.root, self.p["timeout"])
+            result = StageResult(stage, "ok" if rc == 0 else "failed", time.monotonic() - started, template[0])
+            reason = ""
+            if rc != 0:
+                tail = (err or out).strip().splitlines()
+                reason = tail[-1][:120] if tail else f"exit {rc}"
+            elif quota_exhausted(out + err):
+                result.status = "failed"
+                reason = f"한도 소진 ('{quota_exhausted(out + err)}')"
+            elif accept and not accept(out):
+                result.status, reason = "failed", "결론 없는 출력 (한도 소진 · 턴 잘림 가능)"
+            if not reason:
+                break
+            result.detail = reason
+            if index + 1 < len(candidates):
+                self.log(f"  [{'retry':^7}] {stage:<9} {template[0]} 실패: {reason} → {candidates[index + 1][0]} 로 재시도")
         return result, out
 
     # ------------------------------------------------------------ stages
@@ -219,9 +289,15 @@ class Pipeline:
         notes = f"\n# Reviewer requested changes (fix these first)\n{review_notes}\n" if review_notes else ""
         prompt = IMPLEMENT_PROMPT.format(task_id=self.task.name, brief=self._read("brief.md", "(no brief)"),
                                          review_notes=notes, pack=self._read("pack.md", "(no pack)"))
+        before = workspace_fingerprint(self.root, self.p["base_ref"])
         result, out = self._agent("implement", prompt)
         if out.strip():
             self._write("out-codex.md", out)
+        if result.status == "ok" and workspace_fingerprint(self.root, self.p["base_ref"]) == before:
+            # codex 는 사이드카(codex-code-mode-host)가 없으면 "ok" 로 끝나면서 파일을 하나도 못 고친다.
+            # 리뷰까지 보내면 조용한 실패를 토큰을 써서 발견하게 되므로 여기서 멈춘다.
+            result.status = "failed"
+            result.detail = "변경 0 — 러너가 파일을 고치지 못했습니다 (codex 사이드카 누락 · 권한 거부 확인)"
         return self._record(result)
 
     def verify(self) -> StageResult:
@@ -246,7 +322,7 @@ class Pipeline:
             diff_text = diff_text[: self.p["review_budget"] * 4] + "\n…(truncated to review_budget)"
         prompt = REVIEW_PROMPT.format(task_id=self.task.name, brief=self._read("brief.md", "(no brief)"),
                                       verify=self._read("verify.md", "(not run)"), diff=diff_text)
-        result, out = self._agent("review", prompt)
+        result, out = self._agent("review", prompt, accept=lambda o: verdict_of(parse_claude_json(o)[0]) != "UNKNOWN")
         text, usage = parse_claude_json(out)
         result.claude = usage
         if text:

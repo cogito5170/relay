@@ -106,12 +106,16 @@ def _blocks(entry: dict, tools: dict) -> list[tuple[str, str, int]]:
     return out  # thinking·이미지 등은 overhead 로 처리
 
 
+ASSISTANT_CATEGORIES = {"assistant text", "tool call", "Write/Edit input", "thinking"}
+
+
 def analyze(path: Path) -> Report:
     ctxs: list[int] = []
     items: list[Item] = []
     pending: list[tuple[str, str, int]] = []
     seen: set = set()
     tools: dict = {}
+    prev_output = 0
     for entry in _iter_jsonl(path):
         if entry.get("isSidechain") or entry.get("type") not in ("assistant", "user"):
             continue
@@ -137,9 +141,18 @@ def analyze(path: Path) -> Report:
                 items += [Item(label, cat, tok * scale, i) for cat, label, tok in pending if tok]
                 residual = delta - est * scale
                 if residual > 0:
-                    items.append(Item("thinking · 포맷 overhead", "overhead", residual, i))
+                    # 직전 응답의 output 전체가 다음 요청 컨텍스트에 들어간다. 그중 본문·tool_use 로
+                    # 설명되지 않는 몫은 thinking 이다 (transcript 의 thinking 블록은 본문이 비어 있고
+                    # usage 에도 thinking_tokens 가 없는 경우가 많아 이렇게 역산한다).
+                    counted = sum(tok for cat, _, tok in pending if cat in ASSISTANT_CATEGORIES) * scale
+                    thought = min(residual, max(0.0, prev_output - counted))
+                    if thought:
+                        items.append(Item(f"thinking (req#{i - 1} 응답)", "thinking", thought, i))
+                    if residual - thought > 0:
+                        items.append(Item("포맷 · 주입 overhead", "overhead", residual - thought, i))
             ctxs.append(ctx)
             pending = []
+            prev_output = int(usage.get("output_tokens") or 0)
             thinking = int((usage.get("output_tokens_details") or {}).get("thinking_tokens") or 0)
             if thinking:  # 도구 루프 안에서는 thinking 블록이 다음 요청 컨텍스트에 남는다
                 pending.append(("thinking", f"thinking (req#{i} 응답)", thinking))
