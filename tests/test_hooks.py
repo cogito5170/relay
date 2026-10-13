@@ -66,6 +66,33 @@ class HooksTest(unittest.TestCase):
                    "cat small.py", "ls", "npm test > out.txt"):
             self.assertIsNone(self.pretool("Bash", command=ok), ok)
 
+    def test_read_guard_rejects_wide_line_range(self):
+        limit = config.DEFAULTS["hooks"]["read_max_range"]
+        denied = self.pretool("Read", file_path="big.py", offset=1, limit=limit + 1)
+        reason = denied["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertIn(f"{limit}줄 이하로 좁혀서", reason)
+        self.assertIn("Grep", reason)
+        self.assertIsNone(self.pretool("Read", file_path="big.py", offset=1, limit=limit))
+        self.assertIsNone(self.pretool("Read", file_path="big.py", offset=900))
+
+    def test_bash_guard_rejects_wide_sed_and_head_ranges(self):
+        limit = config.DEFAULTS["hooks"]["read_max_range"]
+        for wide in (f"sed -n '1,{limit + 1}p' big.py", f'sed -n "100,{100 + limit}p" big.py',
+                     f"sed -n 1,{limit + 1}p big.py", f"head -n {limit + 1} big.py",
+                     f"tail -{limit + 1} big.py", f"cat big.py | head -{limit * 3}"):
+            denied = self.pretool("Bash", command=wide)
+            self.assertIsNotNone(denied, wide)
+            self.assertIn("Grep", denied["hookSpecificOutput"]["permissionDecisionReason"])
+        for ok in (f"sed -n '1,{limit}p' big.py", "sed -n '200,260p' big.py", "head -n 40 big.py",
+                   "tail -20 big.py", "pytest 2>&1 | tail -n 60", "git log --oneline -500"):
+            self.assertIsNone(self.pretool("Bash", command=ok), ok)
+
+    def test_read_max_range_can_be_disabled(self):
+        (self.dir / ".relay" / "config.toml").write_text(
+            '[hooks]\nenabled = ["read_guard", "bash_guard"]\nread_max_range = 0\n')
+        self.assertIsNone(self.pretool("Read", file_path="big.py", offset=1, limit=900))
+        self.assertIsNone(self.pretool("Bash", command="sed -n '1,900p' big.py"))
+
     def test_write_guard_is_opt_in(self):
         content = "y" * 40_000
         self.assertIsNone(self.pretool("Write", file_path="a.md", content=content))

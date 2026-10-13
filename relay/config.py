@@ -20,6 +20,7 @@ DEFAULTS = {
         "gate_context": 100_000,   # 마지막 요청 컨텍스트가 이 이상이면 새 메시지 차단
         "gate_requests": 80,       # 세션 요청 수가 이 이상이면 차단
         "read_max_lines": 400,     # 이보다 긴 파일은 offset/limit 없이 Read 금지
+        "read_max_range": 120,     # 한 번에 읽을 수 있는 최대 줄 수 (Read limit, sed -n 'A,Bp', head/tail -n N)
         "write_max_tokens": 6_000, # write_guard 를 켰을 때 한 번에 쓸 수 있는 최대 토큰
         "noisy_commands": ["pytest", "npm test", "npm run test", "yarn test", "pnpm test", "cargo test",
                            "go test", "mvn ", "gradle", "git log", "docker logs", "kubectl logs",

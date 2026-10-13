@@ -5,7 +5,8 @@ CLAUDE.md 의 규칙은 모델이 지킬 수도, 안 지킬 수도 있다. hook 
 
 - prompt  (UserPromptSubmit): 컨텍스트·요청 수가 한도를 넘으면 메시지를 막고 /handoff → /clear 를 안내.
                               막힌 메시지는 모델에 가지 않는다. `[force]` 를 넣으면 통과.
-- pretool (PreToolUse):       큰 파일 전체 Read, 출력이 큰 명령의 무제한 실행, (선택) 큰 Write 를 거부하고
+- pretool (PreToolUse):       큰 파일 전체 Read, 너무 넓은 줄 범위 읽기, 출력이 큰 명령의 무제한 실행,
+                              (선택) 큰 Write 를 거부하고
                               짧은 이유만 Claude 에게 돌려준다. 이유 수십 토큰으로 수천 토큰의 출력을 막는다.
 
 어떤 예외가 나도 통과시킨다(fail-open). relay 버그가 사용자의 세션을 멈추면 안 된다.
@@ -25,6 +26,15 @@ FORCE = "[force]"
 BINARY_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".ipynb", ".svg"}
 LIMITERS = re.compile(r"\||>|\s-q\b|--quiet|--silent|\s-n\s*\d|--max-count|--tail|--stat|--shortstat|"
                       r"--name-only|--name-status|\s-\d+\b|--oneline\s+-\d")
+
+# 범위를 지정해 읽는 명령. 범위가 read_max_range 를 넘으면 "줄 범위로 읽었다"고 보지 않는다.
+RANGES = (
+    (re.compile(r"\bsed\b[^|;&]*?-n\s*['\"]?(\d+)\s*,\s*(\d+)\s*p"),
+     lambda m: int(m.group(2)) - int(m.group(1)) + 1),
+    (re.compile(r"\b(?:head|tail)\b\s+(?:-n\s*|-)(\d+)\b"), lambda m: int(m.group(1))),
+)
+TOKENS_PER_LINE = 12   # 범위만 보고 거부할 때의 거친 환산 (events 의 avoided 용)
+NARROW_READ_ADVICE = "Grep 으로 위치를 찾고 {limit}줄 이하로 좁혀서 읽으세요."
 
 
 def _log(root: Path, rule: str, detail: str, avoided: int) -> None:
@@ -66,7 +76,13 @@ def _file_stats(path: Path) -> tuple[int, int]:
 
 
 def read_guard(tool_input: dict, conf: dict, cwd: Path) -> tuple[str, int] | None:
-    if tool_input.get("offset") or tool_input.get("limit"):
+    max_range = conf["hooks"]["read_max_range"]
+    limit = tool_input.get("limit") or 0
+    if max_range and limit > max_range:
+        return (f"relay: 한 번에 {limit}줄은 너무 넓습니다 (한도 {max_range}줄). 읽은 줄은 이 세션의 이후 "
+                f"모든 요청이 다시 읽습니다. " + NARROW_READ_ADVICE.format(limit=max_range)), \
+               (limit - max_range) * TOKENS_PER_LINE
+    if tool_input.get("offset") or limit:
         return None
     path = Path(tool_input.get("file_path") or "")
     path = path if path.is_absolute() else cwd / path
@@ -79,9 +95,32 @@ def read_guard(tool_input: dict, conf: dict, cwd: Path) -> tuple[str, int] | Non
             f"다시 읽습니다. Grep 으로 위치를 찾은 뒤 offset/limit 으로 필요한 범위만 읽으세요."), tokens
 
 
+def range_guard(command: str, conf: dict) -> tuple[str, int] | None:
+    """`sed -n 'A,Bp'` · `head -n N` · `tail -n N` 의 범위가 한도를 넘으면 거부한다.
+
+    범위 플래그가 있으면 LIMITERS 는 '출력을 제한했다'고 보고 통과시키므로, 그 검사보다 먼저 본다.
+    """
+    max_range = conf["hooks"]["read_max_range"]
+    if not max_range:
+        return None
+    for pattern, span_of in RANGES:
+        for m in pattern.finditer(command):
+            span = span_of(m)
+            if span > max_range:
+                return (f"relay: `{m.group(0)}` 는 {span}줄입니다 (한도 {max_range}줄). 읽은 줄은 이 세션의 "
+                        f"이후 모든 요청이 다시 읽습니다. " + NARROW_READ_ADVICE.format(limit=max_range)), \
+                       (span - max_range) * TOKENS_PER_LINE
+    return None
+
+
 def bash_guard(tool_input: dict, conf: dict, cwd: Path) -> tuple[str, int] | None:
     command = (tool_input.get("command") or "").strip()
-    if not command or LIMITERS.search(command):
+    if not command:
+        return None
+    wide = range_guard(command, conf)
+    if wide:
+        return wide
+    if LIMITERS.search(command):
         return None
     for segment in re.split(r"&&|;|\|\|", command):
         seg = segment.strip()
