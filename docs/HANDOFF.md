@@ -13,7 +13,7 @@
 | 명령 | 역할 | 검증 |
 |---|---|---|
 | `relay lean` | 도구 6개만 켠 대화형 Claude | 실측 |
-| `relay run` | explore(Gemini) → pack → implement(Codex) → verify → review(Claude lean), CHANGES 면 재구현 | Claude 리뷰는 실측, Gemini/Codex 는 대역 스크립트로만 |
+| `relay run` | explore(Gemini) → pack → implement(Codex) → verify → review(Claude lean), CHANGES 면 재구현 | **실제 CLI 로 end-to-end 2회 실행 (2026-10-13)**, 2회차 APPROVE |
 | `relay init --hooks` | 컨텍스트 한도 넘으면 메시지 차단, 큰 파일 통째 Read · 무제한 출력 명령 차단 | 실제 세션 실측 |
 | `relay why` / `relay doctor` | 캐시 읽기 원인 분해 / 고정 부분 진단 | 실측 |
 | `relay usage --save-baseline` | 기준선 저장, 이후 배수 비교 | 실측 |
@@ -22,7 +22,7 @@
 ## 핵심 측정값 (Claude Code 2.1.296, `claude -p`, Haiku)
 
 - 첫 요청 컨텍스트(고정 부분): 기본 **35.1k** → `--tools` 6개 **7.9k (−78%)** → 리뷰용 3개 + 짧은 system prompt **4.0k (−89%)**. 고정 부분의 대부분은 **기본 도구 설명**이다.
-- `relay run` 리뷰 1회: **1턴, 컨텍스트 5.5~6.5k**. 기본 대화형은 첫 메시지만 35k.
+- `relay run` 리뷰 1회: 대역 스크립트(1턴)로는 **5.5~6.5k**, 실제 작업(sonnet/medium, 3턴)은 **컨텍스트 35.8k · 가중 약 15.6k**. 턴이 늘면 컨텍스트가 매 턴 다시 읽히므로 비용이 턴 수에 비례한다. 기본 대화형은 첫 메시지만 35k.
 - 긴 세션(이 대화) 분해: 고정 48% · 미분류 19% · thinking 13% · Claude 가 쓴 파일 13% · 명령 출력 3%.
 - hook 으로 차단된 메시지는 **모델 호출 0회 · 토큰 0**.
 
@@ -77,10 +77,18 @@ review_effort = "medium"
 
 ## 다음 할 일 (로컬 세션)
 
-1. **Codex CLI · Gemini CLI 를 설치하고 `relay run --dry-run` → 실제 1회 실행.** 이 환경에서는 설치할 수 없어 실제로 돌려 보지 못했다. 플래그가 다르면 `relay/config.py` 의 `runners` 기본값을 고친다 (`gemini -p`, `codex exec --full-auto`, `codex exec --sandbox read-only`).
+1. ~~Codex CLI · Gemini CLI 로 `relay run` 실제 실행~~ **완료 (2026-10-13).** 측정과 문제는 `docs/pipeline.md` 의 "실측 2" 에 있다. 러너 기본값은 `codex exec --sandbox workspace-write` 로 고쳤고, 러너 실패 시 다음 후보로 재시도하도록 바꿨다.
 2. **`relay lean` 으로 평소 작업을 해 보고** 빠져서 불편한 도구가 있으면 `[lean] tools` 에 추가 (도구 하나 = 고정 부분 증가).
 3. hooks 를 Sonnet / Opus 세션에서도 확인 (Haiku 에서만 확인했다).
 4. `relay why` 의 미분류 19% 분석: 세션 중 주입되는 시스템 메시지 · 도구 정보로 추정, 확인 안 됨.
+5. 리뷰 턴 수 줄이기 실험: 실제 리뷰가 3턴(파일 열기 포함)이면 가중 약 15.6k 다. `--max-turns` 를 4 로 낮추거나 system prompt 에 "턴마다 전체 컨텍스트가 다시 과금된다" 를 넣었을 때 VERDICT 품질이 유지되는지 확인.
+6. Gemini explore 의 503 빈도를 보고, 잦으면 `[runners] explore` 의 1순위를 `codex exec --sandbox read-only` 로 바꾼다.
+
+## 로컬 환경 메모 (이 맥)
+
+- `codex` 는 별도 설치가 아니라 플러그인 번들(`~/.codex/plugins/.plugin-appserver/`)에 있다. `~/.local/bin` 에 **`codex` 와 `codex-code-mode-host` 를 둘 다** 링크해야 한다. 사이드카가 없으면 codex 는 "ok" 로 끝나면서 파일을 하나도 못 고친다.
+- `python` 은 없고 `python3` 만 있다. `.relay/config.toml` 의 `pipeline.verify` 는 `python3 -m unittest discover -s tests`.
+- `.relay/config.toml` 은 Pro 권장값 + `[runners] implement` 재정의로 설치돼 있다 (git 에는 올리지 않음).
 
 ## 파일 지도
 
@@ -92,4 +100,4 @@ review_effort = "medium"
 | `relay/mcp_server.py` | MCP 서버 |
 | `relay/config.py` | 모든 기본값 (`DEFAULTS`) |
 | `docs/pipeline.md` · `docs/playbook.md` | 파이프라인 측정과 사용법 · 일상 운용법 |
-| `tests/` | `python -m unittest discover -s tests` (47개, 외부 의존성 없음) |
+| `tests/` | `python3 -m unittest discover -s tests` (51개, 외부 의존성 없음) |

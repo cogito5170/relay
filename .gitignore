@@ -3,3 +3,9 @@ __pycache__/
 build/
 dist/
 .venv/
+# relay init 이 설치하는 로컬 전용 파일 (경로·한도가 머신마다 다르다)
+.relay/
+.claude/
+.agent/
+AGENTS.md
+CLAUDE.md

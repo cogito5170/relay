@@ -111,6 +111,32 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(review[review.index("--tools") + 1], "Read,Grep,Glob")
         self.assertIn("--system-prompt", review)
 
+    def test_default_implement_runner_uses_workspace_write_sandbox(self):
+        self.assertEqual(
+            config.DEFAULTS["runners"]["implement"],
+            [["codex", "exec", "--sandbox", "workspace-write", "{prompt}"]],
+        )
+    def test_agent_falls_back_when_first_runner_fails(self):
+        """설치돼 있지만 실패하는 러너 다음 후보로 넘어간다 (Gemini 503 같은 경우)."""
+        fail = self.bin / "fail.py"
+        fail.write_text("import sys; sys.stderr.write('503 overloaded\\n'); sys.exit(1)\n")
+        py = sys.executable
+        self.conf["runners"]["explore"] = [[py, str(fail), "{prompt}"],
+                                           [py, str(self.bin / "explore.py"), "{prompt}"]]
+        logged = []
+        pipe = pipeline.Pipeline(self.root, self.task, self.conf, log=logged.append)
+        result = pipe.explore()
+        self.assertEqual(result.status, "ok")
+        self.assertIn("## Key locations", (self.task / "explore.md").read_text())
+        self.assertTrue(any("재시도" in line for line in logged))
+
+    def test_installed_runners_skips_missing(self):
+        py = sys.executable
+        runners = pipeline.installed_runners([["missing-xyz-cli"], [py, "-V"]])
+        self.assertEqual(runners, [[py, "-V"]])
+        with self.assertRaises(pipeline.RunnerMissing):
+            pipeline.installed_runners([["missing-xyz-cli"]])
+
 
 if __name__ == "__main__":
     unittest.main()

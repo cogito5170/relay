@@ -291,8 +291,10 @@ def cmd_run(args) -> int:
     if args.dry_run:
         for stage in ("explore", "implement", "review"):
             try:
-                runner = pipeline.pick_runner(conf["runners"][stage])
-                print(f"{stage:<10} {' '.join(runner)[:110]}")
+                runners = pipeline.installed_runners(conf["runners"][stage])
+                print(f"{stage:<10} {' '.join(runners[0])[:110]}")
+                for fallback in runners[1:]:
+                    print(f"{'':<10} ↳ 실패 시 {' '.join(fallback)[:100]}")
             except pipeline.RunnerMissing as e:
                 print(f"{stage:<10} ✗ {e}")
         print(f"{'verify':<10} {conf['pipeline']['verify'] or '(미설정)'}")

@@ -41,7 +41,7 @@ DEFAULTS = {
     "runners": {
         "explore": [["gemini", "-p", "{prompt}"],
                     ["codex", "exec", "--sandbox", "read-only", "{prompt}"]],
-        "implement": [["codex", "exec", "--full-auto", "{prompt}"]],
+        "implement": [["codex", "exec", "--sandbox", "workspace-write", "{prompt}"]],
         "review": [["claude", "-p", "{prompt}", "--model", "{review_model}", "--effort", "{review_effort}",
                     "--tools", "Read,Grep,Glob", "--strict-mcp-config", "--system-prompt", "{system_prompt}",
                     "--max-turns", "8", "--output-format", "json"]],

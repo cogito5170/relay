@@ -108,12 +108,17 @@ def _fill(template: list[str], values: dict) -> list[str]:
     return out
 
 
-def pick_runner(candidates: list[list[str]]) -> list[str]:
-    for cmd in candidates:
-        if cmd and shutil.which(cmd[0]):
-            return cmd
+def installed_runners(candidates: list[list[str]]) -> list[list[str]]:
+    """설치된 러너 후보를 설정 순서대로 모두 반환한다 (앞 후보가 실패하면 다음 후보로 넘어간다)."""
+    found = [cmd for cmd in candidates if cmd and shutil.which(cmd[0])]
+    if found:
+        return found
     names = ", ".join(c[0] for c in candidates if c) or "(none)"
     raise RunnerMissing(f"러너가 설치되어 있지 않습니다: {names}")
+
+
+def pick_runner(candidates: list[list[str]]) -> list[str]:
+    return installed_runners(candidates)[0]
 
 
 def run_command(template: list[str], prompt: str, values: dict, cwd: Path, timeout: int) -> tuple[int, str, str]:
@@ -184,15 +189,26 @@ class Pipeline:
         return result
 
     def _agent(self, stage: str, prompt: str) -> tuple[StageResult, str]:
+        """설치된 러너 후보를 순서대로 시도한다. 실패하면 다음 후보로 넘어간다.
+
+        Gemini CLI 는 과부하(503)나 내부 오류로 비대화형 실행이 통째로 죽는 일이 있다.
+        그때 explore 를 건너뛰면 pack 이 비어서 다음 단계 품질이 떨어지므로 다음 후보(codex read-only)로 넘긴다.
+        """
         started = time.monotonic()
         try:
-            template = pick_runner(self.runners[stage])
+            candidates = installed_runners(self.runners[stage])
         except RunnerMissing as e:
             return StageResult(stage, "skipped", detail=str(e)), ""
-        rc, out, err = run_command(template, prompt, self.values, self.root, self.p["timeout"])
-        result = StageResult(stage, "ok" if rc == 0 else "failed", time.monotonic() - started, template[0])
-        if rc != 0:
-            result.detail = (err or out).strip().splitlines()[-1][:120] if (err or out).strip() else f"exit {rc}"
+        result, out = StageResult(stage, "failed", runner="-"), ""
+        for index, template in enumerate(candidates):
+            rc, out, err = run_command(template, prompt, self.values, self.root, self.p["timeout"])
+            result = StageResult(stage, "ok" if rc == 0 else "failed", time.monotonic() - started, template[0])
+            if rc == 0:
+                break
+            tail = (err or out).strip().splitlines()
+            result.detail = tail[-1][:120] if tail else f"exit {rc}"
+            if index + 1 < len(candidates):
+                self.log(f"  [{'retry':^7}] {stage:<9} {template[0]} 실패: {result.detail} → {candidates[index + 1][0]} 로 재시도")
         return result, out
 
     # ------------------------------------------------------------ stages
