@@ -61,7 +61,7 @@ Pro 한도는 5시간 단위 사용량과 주간 사용량으로 관리된다. �
 - 85% 초과 → 남은 기간 Claude 는 최종 리뷰만. 나머지는 Codex / agy / ChatGPT.
 - 한도 도달 → Codex · agy 로 계속 진행하고 리뷰는 다음 주기로 미룬다.
 
-**Pro 권장 설정** (`.relay/config.toml`): lean 고정 부분이 약 8k 라서 한도를 기본값보다 낮춘다.
+**Pro 설정** — v0.4.1 부터 기본값이다 (`relay init` 이 만드는 config.toml 포함). 기존 프로젝트는 `rm .relay/config.toml && relay init` 으로 갱신. 아래 `[pipeline] verify` 만 프로젝트에 맞게 직접 넣는다.
 ```toml
 [budget]
 warn_context = 40000

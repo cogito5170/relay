@@ -212,7 +212,7 @@ class CliTest(TempDirTest):
         (self.root / ".relay" / "config.toml").write_text("[budget]\nmax_context = 5\n")
         conf = config.load(self.root)
         self.assertEqual(conf["budget"]["max_context"], 5)
-        self.assertEqual(conf["budget"]["warn_requests"], 40)
+        self.assertEqual(conf["budget"]["warn_requests"], 30)
 
 
 if __name__ == "__main__":
