@@ -143,6 +143,7 @@ relay run       # explore(agy) → pack → implement(Codex) → verify → revi
 | `relay lean [--print] [-- claude 인자]` | 도구를 줄인 대화형 Claude (base −78% 실측) |
 | `relay run [id] [--only/--skip 단계] [--verify CMD] [--dry-run]` | 파이프라인: explore → pack → implement → verify → review, CHANGES 면 재구현 |
 | `relay why [session]` | 세션의 캐시 읽기를 원인별로 분해 (고정 부분 · thinking · Claude 가 쓴 내용 · 명령 출력 …) + 처방 |
+| `relay watch [session]` | **감시자**: codex(→agy)가 세션을 보고 `CONTINUE / DELEGATE / HANDOFF / CLEAR` 판정. Claude 토큰 0 |
 | `relay doctor` | 고정 부분 진단: base 크기, CLAUDE.md·@import, MCP 서버 목록, 주간 절감량 |
 | `relay init --hooks` / `relay hook prompt\|pretool` | Claude Code hooks: 컨텍스트 한도 넘으면 메시지 차단, 큰 파일 전체 Read · 무제한 출력 명령 차단 |
 | `relay statusline` | Claude Code 하단에 `ctx 72k ████░ · req 31 · read 1.9M · ⚠` 표시 (토큰 비용 0) |

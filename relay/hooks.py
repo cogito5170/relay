@@ -19,6 +19,7 @@ from pathlib import Path
 
 from relay import config as cfg
 from relay import events
+from relay import supervisor
 from relay.statusline import last_context
 from relay.tokens import estimate, human
 
@@ -42,6 +43,28 @@ def _log(root: Path, rule: str, detail: str, avoided: int) -> None:
                   avoided=avoided)
 
 
+def supervisor_gate(data: dict, conf: dict, ctx: int) -> dict | None:
+    """감시 모델의 캐시된 판정을 즉시 반영한다 (모델 호출 없음 = 0 토큰).
+
+    판정이 낡았고 컨텍스트가 soft 한도를 넘었으면 갱신을 백그라운드로 띄우고, 이번 메시지는 통과시킨다.
+    CLEAR 는 막고, 나머지는 안내만 붙인다 — 감시자가 사용자의 작업을 임의로 끊지 않게 한다.
+    """
+    sup = conf["supervisor"]
+    if not sup["enabled"]:
+        return None
+    root = cfg.find_root(Path(data.get("cwd") or "."))
+    cached = supervisor.read_cache(root)
+    if not supervisor.is_fresh(cached, sup["max_age"]) and ctx >= sup["soft_context"]:
+        supervisor.refresh_in_background(root)
+    notice = supervisor.hook_notice(cached, conf)
+    if not notice:
+        return None
+    if cached.get("verdict") == "CLEAR":
+        _log(root, "gate:supervisor", f"CLEAR {cached.get('reason', '')}"[:80], ctx)
+        return {"decision": "block", "reason": f"{notice}\n(그래도 보내려면 메시지에 {FORCE} 를 넣으세요)"}
+    return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": notice}}
+
+
 def prompt_gate(data: dict, conf: dict) -> dict | None:
     prompt = data.get("prompt") or ""
     if prompt.lstrip().startswith("/") or FORCE in prompt:
@@ -52,7 +75,7 @@ def prompt_gate(data: dict, conf: dict) -> dict | None:
     ctx, totals = last_context(Path(transcript))
     h = conf["hooks"]
     if ctx < h["gate_context"] and totals.requests < h["gate_requests"]:
-        return None
+        return supervisor_gate(data, conf, ctx)
     _log(Path(data.get("cwd") or "."), "gate:prompt", f"ctx={ctx} req={totals.requests}", ctx)
     return {"decision": "block", "reason": (
         f"relay: 컨텍스트 {human(ctx)} · 요청 {totals.requests}회. 계속하면 이후 요청마다 {human(ctx)} 이상을 다시 읽습니다.\n"

@@ -43,6 +43,17 @@ DEFAULTS = {
         "implement_fallback_model": "gemini-3.8-flash-high",
         "timeout": 1800,
     },
+    # relay watch — Claude 세션을 감시하는 모델. 감시에 Claude 를 쓰지 않는다 (러너에 claude 금지).
+    "supervisor": {
+        "enabled": True,
+        "soft_context": 40_000,     # 마지막 요청 컨텍스트가 이 이상이면 hook 이 판정을 갱신한다
+        "max_age": 900,             # 캐시된 판정을 재사용하는 시간(초)
+        "timeout": 300,
+        "runners": [["codex", "exec", "--sandbox", "read-only", "{prompt}"],
+                    ["agy", "--mode", "plan", "--model", "{supervisor_fallback_model}",
+                     "--print", "{no_shell}\n\n{prompt}"]],
+        "fallback_model": "gemini-3.8-flash-high",
+    },
     # 단계별 러너 후보 (앞에서부터 설치된 것 사용). {prompt} 가 없으면 stdin 으로 전달.
     "runners": {
         # agy(Antigravity CLI) 는 plan 모드에서 파일을 읽기만 한다. --print 는 프롬프트를 바로 뒤에 받아야 한다.

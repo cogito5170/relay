@@ -16,6 +16,7 @@
 | `relay run` | explore(agy) → pack → implement(Codex) → verify → review(Claude lean), CHANGES 면 재구현 | **실제 CLI 로 end-to-end 2회 실행 (2026-10-13)**, 2회차 APPROVE |
 | `relay init --hooks` | 컨텍스트 한도 넘으면 메시지 차단, 큰 파일 통째 Read · 무제한 출력 명령 차단 | 실제 세션 실측 |
 | `relay why` / `relay doctor` | 캐시 읽기 원인 분해 / 고정 부분 진단 | 실측 |
+| `relay watch` | 감시자: codex(→agy)가 세션을 보고 CONTINUE/DELEGATE/HANDOFF/CLEAR 판정, hook·상태줄에 반영 | **실측 (codex 11.5초, 스냅샷 292 tok, Claude 토큰 0)** |
 | `relay usage --save-baseline` | 기준선 저장, 이후 배수 비교 | 실측 |
 | `relay task` · `pack` · `handoff` · `mcp` | 파일 기반 인수인계, MCP 서버(Claude Code 연결 확인) | 테스트 |
 

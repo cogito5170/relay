@@ -6,11 +6,13 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from relay import config as cfg
 from relay import pack as packmod
-from relay import attribution, doctor, events, hooks, pipeline, mcp_server, router, statusline, tasks, usage
+from relay import (attribution, doctor, events, hooks, pipeline, mcp_server, router, statusline,
+                   supervisor, tasks, usage)
 from relay.tokens import estimate, human
 
 BASELINE = Path.home() / ".relay" / "baseline.json"
@@ -258,6 +260,35 @@ def cmd_why(args) -> int:
     return 0
 
 
+def cmd_watch(args) -> int:
+    """Claude 세션을 감시 모델(codex → agy)에게 판정받아 `.relay/supervisor.json` 에 캐시한다."""
+    root = cfg.find_root()
+    conf = cfg.load(root)
+    transcript = attribution.find_transcript(args.session, root)
+    cached = supervisor.read_cache(root)
+    if args.cached or (not args.refresh and supervisor.is_fresh(cached, conf["supervisor"]["max_age"])):
+        if cached:
+            if not args.quiet:
+                age = int(time.time() - float(cached.get("ts") or 0))
+                print(f"(캐시 {age}초 전)")
+                print(supervisor.render(cached))
+            return 0
+        if args.cached:
+            if not args.quiet:
+                print("판정 캐시가 없습니다. relay watch --refresh 로 한 번 받으세요.")
+            return 1
+    if args.snapshot:
+        print(supervisor.build_snapshot(transcript, conf))
+        return 0
+    result = supervisor.run(root, transcript, conf)
+    supervisor.write_cache(root, result)
+    events.append(root, client="supervisor", profile="-", tool="watch", task=result.get("verdict") or "-",
+                  ok=bool(result.get("verdict")), tokens_out=0, avoided=0)
+    if not args.quiet:
+        print(supervisor.render(result))
+    return 0 if result.get("verdict") else 1
+
+
 def cmd_doctor(args) -> int:
     d = doctor.diagnose(cfg.find_root(), args.days)
     print(f"주간 Claude 요청 수 (최근 {args.days:g}일 기준): {d.weekly_requests}")
@@ -418,6 +449,14 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("hook", help="Claude Code hook 진입점 (stdin JSON)")
     s.add_argument("event", choices=["prompt", "pretool"])
     s.set_defaults(func=lambda a: hooks.main(a.event))
+
+    s = sub.add_parser("watch", help="Claude 세션을 감시 모델(codex → agy)에게 판정받기 (Claude 토큰 0)")
+    s.add_argument("session", nargs="?", help="세션 id 접두어 (기본: 현재 프로젝트의 최근 세션)")
+    s.add_argument("--refresh", action="store_true", help="캐시를 무시하고 다시 판정받기")
+    s.add_argument("--cached", action="store_true", help="모델을 호출하지 않고 캐시만 보기")
+    s.add_argument("--snapshot", action="store_true", help="감시 모델에게 보낼 스냅샷만 출력")
+    s.add_argument("--quiet", action="store_true", help="출력 없이 캐시만 갱신 (hook 용)")
+    s.set_defaults(func=cmd_watch)
 
     s = sub.add_parser("run", help="파이프라인: explore(agy) → pack → implement(Codex) → verify → review(Claude lean)")
     s.add_argument("task", nargs="?")

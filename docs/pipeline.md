@@ -147,6 +147,34 @@ agy 는 모델마다 쿼터가 따로다. 바이너리에 `You have exhausted yo
 **agy 헤드리스의 함정:** 셸 명령 권한은 헤드리스에서 물을 수 없어 자동 거부되고, 그 run 은 출력 0 으로 끝난다 (`jetski: no output produced — a tool required the "command" permission ...`). 처음 agy implement 폴백이 변경 0 으로 실패한 원인이 이것이다. 그래서 agy 를 쓰는 후보에는 `NO_SHELL_NOTE` ("명령 대신 파일 도구만 써라, 테스트는 파이프라인이 돌린다") 를 프롬프트 앞에 붙인다. 붙인 뒤 implement 폴백이 성공했다.
 명령을 꼭 쓰게 하려면 `~/.gemini/antigravity-cli/settings.json` 의 `permissions.allow` 에 `command(<target>)` 를 넣는다 (정확한 문자열 매칭이라 깨지기 쉽다). relay 는 이 파일을 건드리지 않는다.
 
+### 감시자 (`relay watch`) — Claude 를 감시하는 모델
+
+hook 의 차단은 숫자만 본다(컨텍스트 N, 요청 M). "지금 Claude 가 하는 일이 Claude 가 할 일인가" 는 판단이 필요하고, 그 판단을 Claude 에게 맡기면 감시가 비용이 된다. 그래서 **codex 1순위 · agy 폴백**으로 돌린다. `supervisor.assert_not_claude()` 가 러너에 claude 가 들어오면 거부한다.
+
+```
+relay watch                 # 판정 받고 .relay/supervisor.json 에 캐시
+relay watch --snapshot      # 감시 모델에게 보낼 스냅샷만 (모델 호출 0)
+relay watch --cached        # 캐시만 보기
+relay hook prompt           # 캐시된 판정을 즉시 반영 (모델 호출 없음 = 0 토큰)
+```
+
+- 스냅샷은 전사 전체가 아니라 `relay why` 의 수치 + 가장 비싼 항목 5개 + 최근 도구 호출 8개다. **실측 292 토큰.**
+- 판정 4단계: `CONTINUE`(그대로) · `DELEGATE`(다음 작업은 다른 도구로) · `HANDOFF`(파일로 넘기고 마무리) · `CLEAR`(지금 /clear).
+- hook 은 **모델을 호출하지 않는다.** 캐시가 낡고(`max_age` 900초) 컨텍스트가 `soft_context`(40k) 를 넘으면 갱신만 백그라운드로 띄우고 이번 메시지는 통과시킨다.
+- `CLEAR` 만 메시지를 막는다 (`[force]` 로 통과). `DELEGATE`·`HANDOFF` 는 `additionalContext` 로 한 줄 안내만 — 감시자가 작업을 임의로 끊지 않게 한다.
+- 상태줄에도 `감시자 HANDOFF` 로 붙는다 (파일 읽기만).
+
+실측 (2026-10-13, 이 저장소의 67요청 세션):
+
+```
+$ relay watch --refresh
+VERDICT: HANDOFF  (codex, 11.5초, 스냅샷 ~292 tok)
+이유: 67 requests caused 2,627,494 re-read tokens; context exceeds the 60,000 maximum.
+조치: End Claude session 7fd51dd0 and hand remaining implementation to Codex using the relay state.
+```
+
+codex 가 11.5초에 판정했고 Claude 토큰은 0 이다. codex 가 한도 소진·실패면 `agy --mode plan` 으로 넘어간다 (`quota_exhausted` 와 "VERDICT 없음" 을 모두 실패로 본다).
+
 ### 설계 결정
 
 - **Claude 는 판단만, 매번 새 세션.** 세션 길이의 이차 항이 생기지 않는다. 리뷰 노트(`out-claude.md`)는 Codex 에게 넘어가고 Claude 대화는 쌓이지 않는다.

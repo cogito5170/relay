@@ -44,12 +44,19 @@
    - 단계마다 공급자가 다른 체인: explore `agy → codex`, implement `codex → agy(accept-edits)`, review `claude → agy → codex`. 폴백 모델은 `pipeline.implement_fallback_model` · `review_fallback_model`.
    - agy 헤드리스는 셸 명령 권한을 자동 거부하고 출력 0 으로 끝난다. agy 후보 프롬프트에 `NO_SHELL_NOTE` 를 붙여 해결했다 (붙이기 전 implement 폴백은 변경 0 실패, 붙인 뒤 70.2초에 성공 + verify PASS).
 
+10. **Claude 감시자를 세웠다** (`relay/supervisor.py`, `relay watch`). 지금까지 Claude 를 감시하는 모델이 없었고 hook 의 숫자 한도만 있었다.
+    - 판정은 codex(1순위) → agy(폴백). `assert_not_claude` 로 러너에 claude 를 넣지 못하게 막았다 — 감시가 Claude 쿼터를 쓰면 의미가 없다.
+    - 스냅샷은 `relay why` 수치 + 비싼 항목 5개 + 최근 도구 8개로 **292 토큰**. 실측: codex 가 11.5초에 `HANDOFF` 판정, 이유에 실제 숫자(2,627,494 재독)를 인용했다.
+    - hook 은 캐시된 판정만 읽어 0 토큰. `CLEAR` 는 차단(`[force]` 로 통과), `DELEGATE`·`HANDOFF` 는 안내 한 줄. 캐시가 낡고 컨텍스트가 40k 를 넘으면 갱신을 백그라운드로 띄우고 메시지는 통과시킨다.
+    - 상태줄에 `감시자 <판정>` 표시. 설정은 `[supervisor]` (enabled, soft_context, max_age, timeout, runners, fallback_model).
+
 ## 다음 단계
 
-1. `--review-max-turns 4` 로 실제 작업을 리뷰해 VERDICT 가 잘리지 않는지 확인 (잘리면 6 으로). 참고: 실측 3 의 리뷰는 1턴 · 가중 12.3k 였고, 최악값은 16턴 · 가중 107k 다.
-2. implement 가 agy 로 넘어간 런은 `--sandbox` 안에서 돌아 셸 명령이 거부된다. 테스트까지 러너가 돌려야 하는 작업이면 `permissions.allow` 설정이 필요하다 — 필요해지면 `relay doctor` 에 점검 항목으로 넣을지 결정.
-3. 누적 토큰 하드 캡(`pipeline.run_token_budget`) 을 넣을지 결정. 지금은 턴·반복 상한만 있고 누적으로 끊지 않는다.
-4. pack 이 예산 초과로 **버린 새 파일을 리뷰어가 못 보는** 문제: 최소한 "버린 파일 목록" 을 리뷰 입력에 남길지 결정.
-5. `relay run` 을 agy explore 로 한 번 끝까지 돌려 `explore.md` 품질 확인.
-6. `relay lean` 상시 사용, hooks 를 Sonnet/Opus 세션에서 확인.
-7. 남은 가드 구멍: `Read(offset만, limit 없음)` · `awk 'NR>=A&&NR<=B'` · `grep -A/-B/-C N` 은 아직 통과한다. hooks 는 `effiency/.claude/settings.local.json` 에만 있어 `/Users/cogito` 에서 시작한 세션에는 적용되지 않는다 (전역 `~/.claude/settings.json` 설치 검토).
+1. 감시자를 실사용해 보고 판정 품질 확인. codex 가 CONTINUE 를 너무 자주 주면 프롬프트에 임계 수치를 명시한다.
+2. `--review-max-turns 4` 로 실제 작업을 리뷰해 VERDICT 가 잘리지 않는지 확인 (잘리면 6 으로). 참고: 실측 3 의 리뷰는 1턴 · 가중 12.3k 였고, 최악값은 16턴 · 가중 107k 다.
+3. implement 가 agy 로 넘어간 런은 `--sandbox` 안에서 돌아 셸 명령이 거부된다. 테스트까지 러너가 돌려야 하는 작업이면 `permissions.allow` 설정이 필요하다 — 필요해지면 `relay doctor` 에 점검 항목으로 넣을지 결정.
+4. 누적 토큰 하드 캡(`pipeline.run_token_budget`) 을 넣을지 결정. 지금은 턴·반복 상한만 있고 누적으로 끊지 않는다.
+5. pack 이 예산 초과로 **버린 새 파일을 리뷰어가 못 보는** 문제: 최소한 "버린 파일 목록" 을 리뷰 입력에 남길지 결정.
+6. `relay run` 을 agy explore 로 한 번 끝까지 돌려 `explore.md` 품질 확인.
+7. `relay lean` 상시 사용, hooks 를 Sonnet/Opus 세션에서 확인.
+8. 남은 가드 구멍: `Read(offset만, limit 없음)` · `awk 'NR>=A&&NR<=B'` · `grep -A/-B/-C N` 은 아직 통과한다. hooks 는 `effiency/.claude/settings.local.json` 에만 있어 `/Users/cogito` 에서 시작한 세션에는 적용되지 않는다 (전역 `~/.claude/settings.json` 설치 검토).
