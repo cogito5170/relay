@@ -70,9 +70,7 @@ class HooksTest(unittest.TestCase):
         content = "y" * 40_000
         self.assertIsNotNone(self.pretool("Write", file_path="a.md", content=content))
         self.assertIsNone(self.pretool("Write", file_path="a.md", content="short"))
-        (self.dir / ".relay" / "config.toml").write_text('[hooks]
-enabled = ["read_guard"]
-')
+        (self.dir / ".relay" / "config.toml").write_text('[hooks]\nenabled = ["read_guard"]\n')
         self.assertIsNone(self.pretool("Write", file_path="a.md", content=content))
 
     def test_denials_are_logged_with_avoided_tokens(self):
