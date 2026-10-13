@@ -3,8 +3,13 @@ __pycache__/
 build/
 dist/
 .venv/
-# relay init 이 설치하는 로컬 전용 파일 (경로·한도가 머신마다 다르다)
-.relay/
+# relay init 이 설치하는 로컬 전용 파일 (경로·한도가 머신마다 다르다).
+# 단, task 기록(.relay/tasks/)은 Codex · Claude · agy 가 공유하도록 git 에 올린다.
+.relay/*
+!.relay/tasks/
+# task 안에서도 다시 만들 수 있는 산출물은 제외
+.relay/tasks/*/pack.md
+.relay/tasks/*/prompt-*.md
 .claude/
 .agent/
 AGENTS.md
