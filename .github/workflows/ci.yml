@@ -1,0 +1,41 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+      - name: Install and smoke test
+        run: |
+          pip install .
+          cd "$(mktemp -d)"
+          git init -q
+          relay init --statusline
+          test -f .claude/commands/handoff.md
+          test -f .agent/rules/relay.md
+          relay task new "smoke test"
+          relay handoff 1 --to claude
+          relay estimate --offload 0.5 --after-sessions 2
+          relay init --mcp && test -f .mcp.json
+          relay mcp --cost
+          printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci"}}}' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"relay_task_list","arguments":{}}}' | relay mcp --profile claude | tee out.jsonl
+          grep -q '001-smoke-test' out.jsonl
+          relay events
+          relay init --hooks && grep -q "relay hook pretool" .claude/settings.local.json
+          echo '{"tool_name":"Bash","tool_input":{"command":"pytest"},"cwd":"."}' | relay hook pretool | grep -q deny
+          relay why || true
+          relay doctor
+          relay lean --print | grep -q -- "--tools"
+          relay run --dry-run
