@@ -111,18 +111,43 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(review[review.index("--tools") + 1], "Read,Grep,Glob")
         self.assertIn("--system-prompt", review)
 
-    def test_default_implement_runner_uses_workspace_write_sandbox(self):
-        self.assertEqual(
-            config.DEFAULTS["runners"]["implement"],
-            [["codex", "exec", "--sandbox", "workspace-write", "{prompt}"]],
-        )
+    def test_default_implement_runners_are_codex_then_agy(self):
+        """codex 쿼터가 끝나도 구현이 멈추지 않아야 한다."""
+        implement = config.DEFAULTS["runners"]["implement"]
+        self.assertEqual([c[0] for c in implement], ["codex", "agy"])
+        self.assertEqual(implement[0], ["codex", "exec", "--sandbox", "workspace-write", "{prompt}"])
+        self.assertIn("accept-edits", implement[1])   # agy 폴백은 수정 권한이 필요하다
+        self.assertIn("--sandbox", implement[1])      # 셸 명령 승인 대기로 멈추지 않도록
+        pipe = pipeline.Pipeline(self.root, self.task, self.conf)
+        filled = pipeline._fill(implement[1], pipe.values)
+        self.assertEqual(filled[filled.index("--model") + 1],
+                         config.DEFAULTS["pipeline"]["implement_fallback_model"])
+
+    def test_quota_exhaustion_moves_to_next_runner(self):
+        """한도 소진은 종료 코드 0 + 안내 문구로 온다. 그래도 다음 후보로 넘어가야 한다."""
+        for message in ("Claude AI usage limit reached|1760450000",
+                        "You have exhausted your quota on this model."):
+            limited = self.bin / "limited.py"
+            limited.write_text(f"print({message!r})\n")
+            py = sys.executable
+            self.conf["runners"]["explore"] = [[py, str(limited)],
+                                               [py, str(self.bin / "explore.py"), "{prompt}"]]
+            (self.task / "explore.md").unlink(missing_ok=True)
+            self.logs.clear()
+            pipe = pipeline.Pipeline(self.root, self.task, self.conf, log=self.logs.append)
+            result = pipe.explore()
+            self.assertEqual(result.status, "ok", message)
+            self.assertTrue(any("한도 소진" in line for line in self.logs), self.logs)
+        self.assertEqual(pipeline.quota_exhausted("all good"), "")
 
     def test_default_explore_runners_are_agy_then_codex(self):
         """Gemini API 는 쓰지 않는다. 탐색은 agy(plan 모드) 우선, 실패하면 codex read-only."""
         explore = config.DEFAULTS["runners"]["explore"]
         self.assertEqual([c[0] for c in explore], ["agy", "codex"])
-        self.assertEqual(explore[0], ["agy", "--mode", "plan", "--print", "{prompt}"])
-        self.assertEqual(explore[0][-2:], ["--print", "{prompt}"])   # --print 는 프롬프트를 바로 뒤에 받는다
+        self.assertEqual(explore[0][:4], ["agy", "--mode", "plan", "--print"])
+        self.assertEqual(explore[0][-2], "--print")            # --print 는 프롬프트를 바로 뒤에 받는다
+        self.assertIn("{prompt}", explore[0][-1])
+        self.assertIn("{no_shell}", explore[0][-1])            # 헤드리스에서 명령은 자동 거부된다
         self.assertEqual(explore[1], ["codex", "exec", "--sandbox", "read-only", "{prompt}"])
 
     def test_review_max_turns_comes_from_config(self):
@@ -161,7 +186,7 @@ class PipelineTest(unittest.TestCase):
     def test_review_falls_back_when_verdict_is_missing(self):
         """rc 0 이지만 VERDICT 가 없으면(한도 소진·턴 잘림) 다음 후보로 넘어간다."""
         mute = self.bin / "mute.py"
-        mute.write_text("import json; print(json.dumps({'result': 'Claude usage limit reached', 'num_turns': 1}))\n")
+        mute.write_text("import json; print(json.dumps({'result': 'review was cut off', 'num_turns': 1}))\n")
         py = sys.executable
         self.conf["runners"]["review"] = [[py, str(mute)], [py, str(self.bin / "review.py"), "{prompt}"]]
         (self.root / "app.py").write_text("def handler(event):\n    return event  # implemented\n")
@@ -172,9 +197,10 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(pipe.report.verdict, "CHANGES")
         self.assertTrue(any("결론 없는 출력" in line for line in self.logs), self.logs)
 
-    def test_default_review_fallback_is_agy_with_claude_model(self):
+    def test_default_review_fallback_chain_spans_three_quotas(self):
         review = config.DEFAULTS["runners"]["review"]
-        self.assertEqual([c[0] for c in review], ["claude", "agy"])
+        self.assertEqual([c[0] for c in review], ["claude", "agy", "codex"])
+        self.assertIn("{system_prompt}", review[2][-1])   # codex 도 --system-prompt 가 없다
         self.assertEqual(review[1][-2], "--print")
         self.assertIn("{system_prompt}", review[1][-1])      # agy 엔 --system-prompt 가 없다
         self.assertIn("{prompt}", review[1][-1])

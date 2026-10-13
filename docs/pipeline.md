@@ -116,6 +116,37 @@ relay run --review-max-turns 4 --review-model opus   # 이번 실행만 리뷰 �
 - 최악 가중 107k 는 상한일 뿐 하드 캡이 아니다. 누적 토큰으로 런을 끊는 장치는 없다 (`pipeline.run_token_budget` 같은 옵션이 필요하면 추가).
 - agy 는 토큰 사용량을 출력하지 않아 `run.json` 의 `claude` 가 비고, 폴백으로 넘어간 런의 비용은 계측되지 않는다.
 
+### 실측 4 — 모델별 한도 소진 대응 (2026-10-13)
+
+agy 는 모델마다 쿼터가 따로다. 바이너리에 `You have exhausted your quota on this model.` 문구가 있고, **모델을 자동으로 바꿔 주지는 않는다** (그런 동작을 가리키는 문자열이 없다). 한도 소진은 claude 든 agy 든 **종료 코드 0 + 안내 문구**로 오므로, 종료 코드만 보면 "성공"으로 통과한다.
+
+대응 두 겹:
+
+1. `quota_exhausted()` 가 출력에서 한도 문구를 찾으면 그 후보를 실패로 보고 다음 후보로 넘긴다 (모든 단계 공통).
+2. 단계마다 **쿼터가 다른 공급자**로 체인을 깐다. 모델 이름은 설정값이다.
+
+| 단계 | 후보 (앞에서부터) | 쿼터 |
+|---|---|---|
+| explore | `agy --mode plan` → `codex exec --sandbox read-only` | Antigravity → OpenAI |
+| implement | `codex exec --sandbox workspace-write` → `agy --sandbox --mode accept-edits --model {implement_fallback_model}` | OpenAI → Antigravity |
+| review | `claude -p` → `agy --mode plan --model {review_fallback_model}` → `codex exec --sandbox read-only` | Anthropic → Antigravity → OpenAI |
+
+셰임으로 한도 소진을 재현한 결과:
+
+```
+[ retry ] review    claude 실패: 한도 소진 ('usage limit reached') → agy 로 재시도
+[ retry ] review    agy 실패: 한도 소진 ('exhausted your quota') → codex 로 재시도
+[  ok   ] review      0.5s codex VERDICT APPROVE
+```
+
+```
+[ retry ] implement codex 실패: 한도 소진 ('exhausted your quota') → agy 로 재시도
+[  ok   ] implement  70.2s agy            # 실제로 calc.py 를 고쳤고 verify PASS
+```
+
+**agy 헤드리스의 함정:** 셸 명령 권한은 헤드리스에서 물을 수 없어 자동 거부되고, 그 run 은 출력 0 으로 끝난다 (`jetski: no output produced — a tool required the "command" permission ...`). 처음 agy implement 폴백이 변경 0 으로 실패한 원인이 이것이다. 그래서 agy 를 쓰는 후보에는 `NO_SHELL_NOTE` ("명령 대신 파일 도구만 써라, 테스트는 파이프라인이 돌린다") 를 프롬프트 앞에 붙인다. 붙인 뒤 implement 폴백이 성공했다.
+명령을 꼭 쓰게 하려면 `~/.gemini/antigravity-cli/settings.json` 의 `permissions.allow` 에 `command(<target>)` 를 넣는다 (정확한 문자열 매칭이라 깨지기 쉽다). relay 는 이 파일을 건드리지 않는다.
+
 ### 설계 결정
 
 - **Claude 는 판단만, 매번 새 세션.** 세션 길이의 이차 항이 생기지 않는다. 리뷰 노트(`out-claude.md`)는 Codex 에게 넘어가고 Claude 대화는 쌓이지 않는다.

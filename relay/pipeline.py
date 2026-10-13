@@ -51,7 +51,9 @@ Read whatever you need (large context is fine here), then print ONLY this markdo
 """
 
 IMPLEMENT_PROMPT = """Implement task {task_id} in this repository. Follow AGENTS.md.
-Run the relevant tests before finishing. Finish with a summary (max 150 words): files changed (path:line), checks run, open issues.
+Editing files is what matters: a run that changes nothing is a failure. Run the relevant tests if you can,
+but if a shell command is denied, make the edits anyway and say so — the pipeline runs its own verify command.
+Finish with a summary (max 150 words): files changed (path:line), checks run, open issues.
 
 # Brief
 {brief}
@@ -148,6 +150,27 @@ def parse_claude_json(stdout: str) -> tuple[str, dict]:
     return str(data.get("result") or "").strip(), keep
 
 
+# agy 는 헤드리스에서 셸 명령 권한을 물을 수 없어 자동 거부하고, 그 run 은 출력 없이 끝난다
+# (`jetski: no output produced — a tool required the "command" permission`).
+# 그래서 agy 를 쓰는 후보에는 "명령 대신 파일 도구만" 을 프롬프트 앞에 붙인다.
+NO_SHELL_NOTE = ("Do not run shell commands: this run is headless and a command permission request is "
+                 "auto-denied, which ends the run with no output at all. Use file read/write tools only. "
+                 "The pipeline runs the test command itself afterwards.")
+
+# 한도 소진은 보통 종료 코드 0 + 안내 문구로 온다 (claude 의 "usage limit reached",
+# agy 의 "You have exhausted your quota on this model."). 그래야 다음 후보로 넘길 수 있다.
+QUOTA_MARKERS = ("exhausted your quota", "usage limit reached", "quota exceeded", "resource_exhausted",
+                 "rate limit exceeded", "429 too many requests")
+
+
+def quota_exhausted(out: str) -> str:
+    low = out.lower()
+    for marker in QUOTA_MARKERS:
+        if marker in low:
+            return marker
+    return ""
+
+
 def verdict_of(text: str) -> str:
     """첫 줄의 `VERDICT: ...` 를 읽는다. 모델이 `**VERDICT: APPROVE**` 처럼 꾸며도 받아들인다."""
     for line in text.splitlines():
@@ -182,6 +205,8 @@ class Pipeline:
         self.values = {"review_model": self.p["review_model"], "review_effort": self.p["review_effort"],
                        "review_max_turns": self.p["review_max_turns"],
                        "review_fallback_model": self.p["review_fallback_model"],
+                       "implement_fallback_model": self.p["implement_fallback_model"],
+                       "no_shell": NO_SHELL_NOTE,
                        "system_prompt": REVIEW_SYSTEM_PROMPT}
 
     # ------------------------------------------------------------ helpers
@@ -228,6 +253,9 @@ class Pipeline:
             if rc != 0:
                 tail = (err or out).strip().splitlines()
                 reason = tail[-1][:120] if tail else f"exit {rc}"
+            elif quota_exhausted(out + err):
+                result.status = "failed"
+                reason = f"한도 소진 ('{quota_exhausted(out + err)}')"
             elif accept and not accept(out):
                 result.status, reason = "failed", "결론 없는 출력 (한도 소진 · 턴 잘림 가능)"
             if not reason:

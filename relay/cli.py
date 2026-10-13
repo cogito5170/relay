@@ -294,7 +294,8 @@ def cmd_run(args) -> int:
         (task / f"{name}.md").unlink(missing_ok=True)
     if args.dry_run:
         shown = {k: conf["pipeline"][k] for k in
-                 ("review_model", "review_effort", "review_max_turns", "review_fallback_model")}
+                 ("review_model", "review_effort", "review_max_turns", "review_fallback_model",
+                  "implement_fallback_model")}
         shown["system_prompt"] = "<system prompt>"   # 실제 값은 길어서 줄이 잘린다
 
         def one_line(argv: list[str], width: int) -> str:

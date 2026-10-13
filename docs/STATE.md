@@ -39,11 +39,17 @@
    - `verdict_of` 는 `**VERDICT: APPROVE**` 처럼 꾸민 줄도 받아들인다.
    - plan 모드 agy 가 셸 명령을 쓰려 하면 승인 대기로 빈 출력이 된다. 리뷰·탐색 프롬프트에 "셸 명령 금지" 를 넣어 5/5 회 VERDICT 산출로 해소했다.
 
+9. 모델별 한도 소진 대응을 넣었다 (`docs/pipeline.md` "실측 4"). agy 는 모델마다 쿼터가 따로이고 자동 전환이 없다.
+   - `quota_exhausted()`: 종료 코드 0 이어도 출력에 한도 문구(`exhausted your quota`, `usage limit reached` 등)가 있으면 실패로 보고 다음 후보로 넘긴다.
+   - 단계마다 공급자가 다른 체인: explore `agy → codex`, implement `codex → agy(accept-edits)`, review `claude → agy → codex`. 폴백 모델은 `pipeline.implement_fallback_model` · `review_fallback_model`.
+   - agy 헤드리스는 셸 명령 권한을 자동 거부하고 출력 0 으로 끝난다. agy 후보 프롬프트에 `NO_SHELL_NOTE` 를 붙여 해결했다 (붙이기 전 implement 폴백은 변경 0 실패, 붙인 뒤 70.2초에 성공 + verify PASS).
+
 ## 다음 단계
 
 1. `--review-max-turns 4` 로 실제 작업을 리뷰해 VERDICT 가 잘리지 않는지 확인 (잘리면 6 으로). 참고: 실측 3 의 리뷰는 1턴 · 가중 12.3k 였고, 최악값은 16턴 · 가중 107k 다.
-2. 누적 토큰 하드 캡(`pipeline.run_token_budget`) 을 넣을지 결정. 지금은 턴·반복 상한만 있고 누적으로 끊지 않는다.
-3. pack 이 예산 초과로 **버린 새 파일을 리뷰어가 못 보는** 문제: 최소한 "버린 파일 목록" 을 리뷰 입력에 남길지 결정.
-4. `relay run` 을 agy explore 로 한 번 끝까지 돌려 `explore.md` 품질 확인.
-5. `relay lean` 상시 사용, hooks 를 Sonnet/Opus 세션에서 확인.
-6. 남은 가드 구멍: `Read(offset만, limit 없음)` · `awk 'NR>=A&&NR<=B'` · `grep -A/-B/-C N` 은 아직 통과한다. hooks 는 `effiency/.claude/settings.local.json` 에만 있어 `/Users/cogito` 에서 시작한 세션에는 적용되지 않는다 (전역 `~/.claude/settings.json` 설치 검토).
+2. implement 가 agy 로 넘어간 런은 `--sandbox` 안에서 돌아 셸 명령이 거부된다. 테스트까지 러너가 돌려야 하는 작업이면 `permissions.allow` 설정이 필요하다 — 필요해지면 `relay doctor` 에 점검 항목으로 넣을지 결정.
+3. 누적 토큰 하드 캡(`pipeline.run_token_budget`) 을 넣을지 결정. 지금은 턴·반복 상한만 있고 누적으로 끊지 않는다.
+4. pack 이 예산 초과로 **버린 새 파일을 리뷰어가 못 보는** 문제: 최소한 "버린 파일 목록" 을 리뷰 입력에 남길지 결정.
+5. `relay run` 을 agy explore 로 한 번 끝까지 돌려 `explore.md` 품질 확인.
+6. `relay lean` 상시 사용, hooks 를 Sonnet/Opus 세션에서 확인.
+7. 남은 가드 구멍: `Read(offset만, limit 없음)` · `awk 'NR>=A&&NR<=B'` · `grep -A/-B/-C N` 은 아직 통과한다. hooks 는 `effiency/.claude/settings.local.json` 에만 있어 `/Users/cogito` 에서 시작한 세션에는 적용되지 않는다 (전역 `~/.claude/settings.json` 설치 검토).
