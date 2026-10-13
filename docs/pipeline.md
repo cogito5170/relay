@@ -152,7 +152,7 @@ agy 는 모델마다 쿼터가 따로다. 바이너리에 `You have exhausted yo
 hook 의 차단은 숫자만 본다(컨텍스트 N, 요청 M). "지금 Claude 가 하는 일이 Claude 가 할 일인가" 는 판단이 필요하고, 그 판단을 Claude 에게 맡기면 감시가 비용이 된다. 그래서 **codex 1순위 · agy 폴백**으로 돌린다. `supervisor.assert_not_claude()` 가 러너에 claude 가 들어오면 거부한다.
 
 ```
-relay watch                 # 판정 받고 .relay/supervisor.json 에 캐시
+relay watch                 # 판정 받고 .relay/supervisor/<session>.json 에 캐시 (세션별)
 relay watch --snapshot      # 감시 모델에게 보낼 스냅샷만 (모델 호출 0)
 relay watch --cached        # 캐시만 보기
 relay hook prompt           # 캐시된 판정을 즉시 반영 (모델 호출 없음 = 0 토큰)

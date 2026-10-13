@@ -261,11 +261,11 @@ def cmd_why(args) -> int:
 
 
 def cmd_watch(args) -> int:
-    """Claude 세션을 감시 모델(codex → agy)에게 판정받아 `.relay/supervisor.json` 에 캐시한다."""
+    """Claude 세션을 감시 모델(codex → agy)에게 판정받아 `.relay/supervisor/<session>.json` 에 캐시한다."""
     root = cfg.find_root()
     conf = cfg.load(root)
     transcript = attribution.find_transcript(args.session, root)
-    cached = supervisor.read_cache(root)
+    cached = supervisor.read_cache(root, transcript.stem)
     if args.cached or (not args.refresh and supervisor.is_fresh(cached, conf["supervisor"]["max_age"])):
         if cached:
             if not args.quiet:

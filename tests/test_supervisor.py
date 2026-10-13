@@ -78,7 +78,7 @@ class SupervisorTest(unittest.TestCase):
         self.assertEqual(result["verdict"], "DELEGATE")
         self.assertEqual(result["action"], "relay handoff --to antigravity")
         supervisor.write_cache(self.root, result)
-        self.assertEqual(supervisor.read_cache(self.root)["verdict"], "DELEGATE")
+        self.assertEqual(supervisor.read_cache(self.root, self.transcript.stem)["verdict"], "DELEGATE")
 
     def test_run_falls_back_when_first_runner_is_out_of_quota(self):
         limited = stub(self.root / "limited.py",
@@ -103,20 +103,22 @@ class SupervisorHookTest(unittest.TestCase):
         self.transcript = transcript(self.root / "s.jsonl", [20_000, 45_000])
         self.refreshed = []
         self._real_refresh = supervisor.refresh_in_background
-        supervisor.refresh_in_background = lambda root, session=None: self.refreshed.append(root)
+        supervisor.refresh_in_background = lambda root, session=None: self.refreshed.append((root, session))
         self.addCleanup(lambda: setattr(supervisor, "refresh_in_background", self._real_refresh))
 
     def tearDown(self):
         self._tmp.cleanup()
 
-    def cache(self, verdict: str, age: int = 0) -> None:
+    def cache(self, verdict: str, age: int = 0, session: str | None = None) -> None:
         supervisor.write_cache(self.root, {"ts": time.time() - age, "verdict": verdict,
+                                           "session": session or self.transcript.stem,
                                            "reason": "re-read 2.6M vs 65k new input",
                                            "action": "/handoff 003 → /clear", "runner": "codex"})
 
-    def run_hook(self, prompt: str = "계속해") -> dict | None:
+    def run_hook(self, prompt: str = "계속해", path: Path | None = None) -> dict | None:
         out = io.StringIO()
-        data = {"cwd": str(self.root), "prompt": prompt, "transcript_path": str(self.transcript)}
+        data = {"cwd": str(self.root), "prompt": prompt,
+                "transcript_path": str(path or self.transcript)}
         self.assertEqual(hooks.main("prompt", io.StringIO(json.dumps(data)), out), 0)
         return json.loads(out.getvalue()) if out.getvalue() else None
 
@@ -144,7 +146,8 @@ class SupervisorHookTest(unittest.TestCase):
     def test_stale_verdict_triggers_background_refresh_without_blocking(self):
         self.cache("CONTINUE", age=10_000)        # max_age 900 보다 오래됨
         self.assertIsNone(self.run_hook())        # 이번 메시지는 막지 않는다
-        self.assertEqual([Path(r).resolve() for r in self.refreshed], [self.root.resolve()])
+        self.assertEqual([(Path(r).resolve(), sess) for r, sess in self.refreshed],
+                         [(self.root.resolve(), self.transcript.stem)])
 
     def test_project_without_relay_dir_is_left_alone(self):
         """.relay 가 없으면 판정을 캐시할 수 없다. 매 프롬프트마다 감시 모델을 부르지 않는다."""
@@ -152,6 +155,46 @@ class SupervisorHookTest(unittest.TestCase):
         self.cache("CLEAR")
         shutil.rmtree(self.root / ".relay")
         self.assertIsNone(self.run_hook())
+        self.assertEqual(self.refreshed, [])
+
+    def test_stale_clear_verdict_does_not_block(self):
+        """낡은 CLEAR 로는 막지 않는다. 갱신만 백그라운드로 띄운다."""
+        self.cache("CLEAR", age=10_000)
+        self.assertIsNone(self.run_hook())
+
+    def test_other_session_verdict_is_ignored(self):
+        """/clear 하면 세션이 바뀐다. 끝난 세션의 CLEAR 가 새 세션을 막아서는 안 된다."""
+        self.cache("CLEAR", session="old-session")
+        self.assertIsNone(self.run_hook())
+        self.cache("CLEAR")                       # 이 세션의 판정이면 막는다
+        self.assertEqual(self.run_hook()["decision"], "block")
+
+    def test_verdicts_are_stored_per_session(self):
+        self.cache("CLEAR", session="old-session")
+        self.cache("CONTINUE", session="new-session")
+        self.assertEqual(supervisor.read_cache(self.root, "old-session")["verdict"], "CLEAR")
+        self.assertEqual(supervisor.read_cache(self.root, "new-session")["verdict"], "CONTINUE")
+        self.assertIsNone(supervisor.read_cache(self.root, "third-session"))
+
+    def test_legacy_single_file_cache_is_read_once_then_replaced(self):
+        """세션 구분이 없던 .relay/supervisor.json 은 같은 세션일 때만 쓰고, 새로 쓸 때 지운다."""
+        legacy = supervisor.legacy_cache_path(self.root)
+        legacy.write_text(json.dumps({"ts": time.time(), "verdict": "CLEAR", "session": "old-session",
+                                      "reason": "r", "action": "a", "runner": "codex"}))
+        self.assertIsNone(supervisor.read_cache(self.root, self.transcript.stem))
+        self.assertEqual(supervisor.read_cache(self.root, "old-session")["verdict"], "CLEAR")
+        self.cache("CONTINUE")
+        self.assertFalse(legacy.exists())
+
+    def test_fresh_transcript_without_assistant_reply_passes(self):
+        """/clear 직후: transcript 에 assistant 응답이 없으면 어떤 판정도 적용하지 않는다."""
+        self.cache("CLEAR")
+        empty = self.root / "fresh.jsonl"
+        empty.write_text("")
+        self.assertIsNone(self.run_hook(path=empty))
+        user_only = transcript(self.root / "user-only.jsonl", [])
+        user_only.write_text(json.dumps({"type": "user", "message": {"content": "안녕"}}) + "\n")
+        self.assertIsNone(self.run_hook(path=user_only))
         self.assertEqual(self.refreshed, [])
 
     def test_no_refresh_below_soft_context(self):

@@ -43,10 +43,11 @@ def _log(root: Path, rule: str, detail: str, avoided: int) -> None:
                   avoided=avoided)
 
 
-def supervisor_gate(data: dict, conf: dict, ctx: int) -> dict | None:
+def supervisor_gate(data: dict, conf: dict, ctx: int, session: str) -> dict | None:
     """감시 모델의 캐시된 판정을 즉시 반영한다 (모델 호출 없음 = 0 토큰).
 
-    판정이 낡았고 컨텍스트가 soft 한도를 넘었으면 갱신을 백그라운드로 띄우고, 이번 메시지는 통과시킨다.
+    판정은 세션별로 읽는다. /clear 하면 세션이 바뀌므로 끝난 세션의 판정은 새 세션에 쓰지 않는다.
+    판정이 낡았으면 (컨텍스트가 soft 한도를 넘을 때) 갱신을 백그라운드로 띄우고 이번 메시지는 통과시킨다.
     CLEAR 는 막고, 나머지는 안내만 붙인다 — 감시자가 사용자의 작업을 임의로 끊지 않게 한다.
     """
     sup = conf["supervisor"]
@@ -55,9 +56,11 @@ def supervisor_gate(data: dict, conf: dict, ctx: int) -> dict | None:
     root = cfg.find_root(Path(data.get("cwd") or "."))
     if not (root / ".relay").is_dir():
         return None          # 판정을 캐시할 곳이 없으면 매 프롬프트마다 감시 모델을 부르게 된다
-    cached = supervisor.read_cache(root)
-    if not supervisor.is_fresh(cached, sup["max_age"]) and ctx >= sup["soft_context"]:
-        supervisor.refresh_in_background(root)
+    cached = supervisor.read_cache(root, session)
+    if not supervisor.is_fresh(cached, sup["max_age"]):
+        if ctx >= sup["soft_context"]:
+            supervisor.refresh_in_background(root, session)
+        return None          # 낡은 판정으로는 막지 않는다
     notice = supervisor.hook_notice(cached, conf)
     if not notice:
         return None
@@ -74,10 +77,13 @@ def prompt_gate(data: dict, conf: dict) -> dict | None:
     transcript = data.get("transcript_path")
     if not transcript or not Path(transcript).is_file():
         return None
-    ctx, totals = last_context(Path(transcript))
+    path = Path(transcript)
+    ctx, totals = last_context(path)
+    if totals.requests == 0:
+        return None          # /clear 직후의 새 세션: 이 transcript 에 아직 assistant 응답이 없다
     h = conf["hooks"]
     if ctx < h["gate_context"] and totals.requests < h["gate_requests"]:
-        return supervisor_gate(data, conf, ctx)
+        return supervisor_gate(data, conf, ctx, path.stem)
     _log(Path(data.get("cwd") or "."), "gate:prompt", f"ctx={ctx} req={totals.requests}", ctx)
     return {"decision": "block", "reason": (
         f"relay: 컨텍스트 {human(ctx)} · 요청 {totals.requests}회. 계속하면 이후 요청마다 {human(ctx)} 이상을 다시 읽습니다.\n"

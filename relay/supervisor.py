@@ -5,7 +5,7 @@ Claude 가 할 일인가" 는 못 본다. 그 판단을 **codex(1순위) · agy(
 Claude 토큰을 쓰면 감시가 비용이 되므로 러너 후보에 claude 를 넣지 않는다 (`assert_not_claude`).
 
 흐름:
-    relay watch            # 스냅샷 만들고 감시 모델에게 물어 판정을 .relay/supervisor.json 에 캐시
+    relay watch            # 스냅샷 만들고 감시 모델에게 물어 판정을 .relay/supervisor/<session>.json 에 캐시
     relay hook prompt      # 캐시된 판정을 즉시 읽어 안내·차단 (모델 호출 없이, 0 토큰)
 
 판정은 네 가지다.
@@ -26,6 +26,7 @@ from relay.tokens import human
 
 VERDICTS = ("CONTINUE", "DELEGATE", "HANDOFF", "CLEAR")
 CACHE_NAME = "supervisor.json"
+CACHE_DIR = "supervisor"
 
 SUPERVISOR_PROMPT = """You supervise a Claude Code session for cost. Claude is the expensive model here;
 you are the cheap one, so you decide and Claude obeys. Every Claude request re-reads the whole
@@ -100,12 +101,25 @@ def parse_verdict(text: str) -> tuple[str, str, str]:
     return verdict, reason, action
 
 
-def cache_path(root: Path) -> Path:
+def legacy_cache_path(root: Path) -> Path:
+    """세션 구분이 없던 옛 캐시 파일. 읽을 때만 본다."""
     return root / ".relay" / CACHE_NAME
 
 
-def read_cache(root: Path) -> dict | None:
-    path = cache_path(root)
+def cache_dir(root: Path) -> Path:
+    return root / ".relay" / CACHE_DIR
+
+
+def cache_path(root: Path, session: str = "") -> Path:
+    """판정은 세션마다 다른 파일에 저장한다.
+
+    /clear 하면 세션 id(= transcript 파일 이름)가 바뀌므로, 세션별로 나누지 않으면 끝난 세션의
+    CLEAR 판정이 새 세션의 첫 메시지를 계속 막는다.
+    """
+    return cache_dir(root) / f"{session}.json" if session else legacy_cache_path(root)
+
+
+def _load(path: Path) -> dict | None:
     if not path.is_file():
         return None
     try:
@@ -114,9 +128,29 @@ def read_cache(root: Path) -> dict | None:
         return None
 
 
-def write_cache(root: Path, result: dict) -> None:
-    if (root / ".relay").is_dir():
-        cache_path(root).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+def read_cache(root: Path, session: str = "") -> dict | None:
+    """session 을 주면 그 세션의 판정만 돌려준다. 다른 세션의 판정은 없는 것으로 본다."""
+    cached = _load(cache_path(root, session))
+    if cached is None and session:
+        legacy = _load(legacy_cache_path(root))
+        cached = legacy if legacy and legacy.get("session") == session else None
+    if cached and session and cached.get("session") != session:
+        return None
+    return cached
+
+
+def write_cache(root: Path, result: dict, keep: int = 20) -> None:
+    if not (root / ".relay").is_dir():
+        return
+    session = result.get("session") or ""
+    path = cache_path(root, session)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    if session:
+        legacy_cache_path(root).unlink(missing_ok=True)   # 세션 구분 없는 옛 파일은 더 읽지 않는다
+        files = sorted(cache_dir(root).glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        for stale in files[keep:]:
+            stale.unlink(missing_ok=True)
 
 
 def is_fresh(cached: dict | None, max_age: int) -> bool:

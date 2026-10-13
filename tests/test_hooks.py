@@ -48,6 +48,16 @@ class HooksTest(unittest.TestCase):
         many = transcript(self.dir / "many.jsonl", 20_000, requests=80)
         self.assertEqual(self.run_hook("prompt", {"prompt": "x", "transcript_path": str(many)})["decision"], "block")
 
+    def test_prompt_gate_judges_only_the_current_session(self):
+        """/clear 하면 transcript 가 바뀐다. 이전 세션이 커도 새 세션의 첫 메시지는 통과해야 한다."""
+        big = transcript(self.dir / "old.jsonl", 20_000, requests=242)
+        self.assertEqual(self.run_hook("prompt", {"prompt": "x", "transcript_path": str(big)})["decision"], "block")
+        fresh = self.dir / "new.jsonl"
+        fresh.write_text("")                      # /clear 직후: assistant 응답이 아직 없다
+        self.assertIsNone(self.run_hook("prompt", {"prompt": "x", "transcript_path": str(fresh)}))
+        fresh.write_text(json.dumps({"type": "user", "message": {"content": "x"}}) + "\n")
+        self.assertIsNone(self.run_hook("prompt", {"prompt": "x", "transcript_path": str(fresh)}))
+
     def test_read_guard(self):
         denied = self.pretool("Read", file_path=str(self.dir / "big.py"))
         out = denied["hookSpecificOutput"]
