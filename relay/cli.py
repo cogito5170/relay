@@ -11,7 +11,7 @@ from pathlib import Path
 
 from relay import config as cfg
 from relay import pack as packmod
-from relay import (attribution, auto, doctor, events, hooks, pipeline, mcp_server, router, statusline,
+from relay import (attribution, auto, cloud_job, doctor, events, hooks, pipeline, mcp_server, router, statusline,
                    supervisor, tasks, usage)
 from relay.tokens import estimate, human
 
@@ -392,12 +392,33 @@ def cmd_delegate(args) -> int:
     return rc
 
 
+def cmd_advise(args) -> int:
+    root = cfg.find_root()
+    task = tasks.resolve(root, args.task)
+    rc, text, report = pipeline.advise(root, task, cfg.load(root), args.agent)
+    print(text)
+    print(f"\n[{report['status']}] → {(task / f'out-{args.agent}.md').relative_to(root)}")
+    return rc
+
+
 def cmd_check(args) -> int:
     if args.ping:
         print("각 도구에 짧은 요청을 보냅니다 (도구당 최대 2분)…", flush=True)
     auto.check(args.ping, on_row=lambda r: print(f"{r[0]:<8} {r[1]:<12} {r[2]}", flush=True))
     if not args.ping:
         print("(실제 응답까지 확인: relay check --ping — 각 도구에 짧은 요청 1회)")
+    return 0
+
+
+def cmd_cloud_run(args) -> int:
+    request = cloud_job.CloudRequest(
+        task_id=args.task_id,
+        agent=args.agent,
+        mode=args.mode,
+        instruction=args.instruction,
+    )
+    report = cloud_job.run_dry(request, Path(args.output))
+    print(json.dumps(report, ensure_ascii=False))
     return 0
 
 
@@ -526,9 +547,23 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--tail", type=int, default=40, help="돌려줄 마지막 줄 수")
     s.set_defaults(func=cmd_delegate)
 
+    s = sub.add_parser("advise", help="Claude 또는 Agy에게 읽기 전용 문서·설계 자문 요청")
+    s.add_argument("task", nargs="?")
+    s.add_argument("--agent", required=True, choices=["claude", "agy"])
+    s.set_defaults(func=cmd_advise)
+
     s = sub.add_parser("check", help="claude · codex · agy 설치/응답 진단")
     s.add_argument("--ping", action="store_true", help="각 도구에 짧은 요청 1회 (토큰 소량 사용)")
     s.set_defaults(func=cmd_check)
+
+    s = sub.add_parser("cloud-run", help="클라우드 러너 요청 검증 및 감사 산출물 생성 (Phase 1)")
+    s.add_argument("--task-id", required=True)
+    s.add_argument("--agent", required=True, choices=cloud_job.AGENTS)
+    s.add_argument("--mode", default="advisory", choices=cloud_job.MODES)
+    s.add_argument("--instruction", required=True)
+    s.add_argument("--output", default="cloud-result")
+    s.add_argument("--dry-run", action="store_true", help="Phase 1 호환 플래그 (현재 항상 dry-run)")
+    s.set_defaults(func=cmd_cloud_run)
 
     s = sub.add_parser("statusline", help="Claude Code statusline (stdin JSON)")
     s.set_defaults(func=lambda a: statusline.main())

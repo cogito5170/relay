@@ -122,7 +122,13 @@ Claude      › /pickup 003                      → relay_task_read (brief+stat
 ```bash
 relay lean      # 대화형 Claude 를 도구 6개로: 첫 요청 컨텍스트 35.1k → 7.9k (−78%), 모든 요청에 적용
 relay run       # explore(agy) → pack → implement(Codex) → verify → review(Claude lean, 1턴 ≈ 6k)
+relay advise 002 --agent claude  # brief+pack만 읽는 문서/설계 자문 (파일 수정·git diff 리뷰 없음)
+relay advise 002 --agent agy     # Agy의 독립 자문
 ```
+
+노트북이 꺼져 있어도 휴대폰에서 실행하는 GitHub 호스팅 경로는
+[docs/cloud-runner.md](docs/cloud-runner.md)를 참고한다. Phase 1은 컨테이너 요청 검증과
+감사 아티팩트까지 수행하며, 로컬 OAuth나 API 키는 요구하지 않는다.
 
 하루 단위 운영법은 [docs/playbook.md](docs/playbook.md). 새 세션은 [docs/HANDOFF.md](docs/HANDOFF.md) 부터 (Pro 30일 운용 계획).
 
@@ -142,6 +148,8 @@ relay run       # explore(agy) → pack → implement(Codex) → verify → revi
 | `relay events [--tail N]` | MCP 도구 호출 감사 로그 요약 (클라이언트 · 도구 · 공급 토큰) |
 | `relay lean [--print] [-- claude 인자]` | 도구를 줄인 대화형 Claude (base −78% 실측) |
 | `relay run [id] [--only/--skip 단계] [--verify CMD] [--dry-run]` | 파이프라인: explore → pack → implement → verify → review, CHANGES 면 재구현 |
+| `relay advise [id] --agent claude\|agy` | brief/pack 기반 읽기 전용 자문. 결과는 `out-claude.md` 또는 `out-agy.md` |
+| `relay cloud-run --task-id ID --agent AGENT --instruction TEXT --output DIR` | GitHub 호스팅 러너용 요청 검증·감사 산출물 생성 (Phase 1, 모델 호출 없음) |
 | `relay why [session]` | 세션의 캐시 읽기를 원인별로 분해 (고정 부분 · thinking · Claude 가 쓴 내용 · 명령 출력 …) + 처방 |
 | `relay watch [session]` | **감시자**: codex(→agy)가 세션을 보고 `CONTINUE / DELEGATE / HANDOFF / CLEAR` 판정. Claude 토큰 0 |
 | `relay doctor` | 고정 부분 진단: base 크기, CLAUDE.md·@import, MCP 서버 목록, 주간 절감량 |

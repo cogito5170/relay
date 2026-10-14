@@ -34,6 +34,21 @@ explore (agy) → pack (relay) → implement (Codex) → verify (테스트) → 
                                           ↑──────────── VERDICT: CHANGES 면 리뷰 노트를 들고 재구현 ──┘
 ```
 
+## 읽기 전용 자문 (`relay advise`)
+
+코드 diff의 승인 여부가 아니라 로드맵·설계·문서에 대한 독립 의견이 필요할 때 사용한다.
+
+```bash
+relay advise 002 --agent claude
+relay advise 002 --agent agy
+```
+
+- 입력: task의 `brief.md`와 `pack.md`
+- 권한: Claude는 Read/Grep/Glob, Agy는 plan 모드이며 shell과 파일 수정 금지
+- 출력: `out-claude.md` 또는 `out-agy.md`, 실행 메타데이터는 `advisory-<agent>.json`
+- `review`와 달리 git diff, 테스트 결과, `VERDICT` 형식을 요구하지 않는다.
+- 백그라운드 runner 요청은 `run.request`에 `advisory claude` 또는 `advisory agy`를 기록한다. 사용자 로그인 세션에서 실행되므로 샌드박스 내부 CLI가 키체인 인증을 못 보는 경우에도 기존 로그인 상태를 재사용한다.
+
 | 단계 | 러너 (기본, 앞에서부터 설치된 것) | Claude 토큰 | 산출물 |
 |---|---|---|---|
 | explore | `agy --mode plan --print` → `codex exec --sandbox read-only` | 0 | `explore.md` (stdout 을 relay 가 저장, 쓰기 권한 불필요) |

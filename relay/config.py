@@ -73,6 +73,12 @@ DEFAULTS = {
                     "--print", "{system_prompt}\n{no_shell}\n\n{prompt}"],
                    # agy 모델까지 소진되면 마지막으로 OpenAI 쿼터에서 받는다 (읽기 전용).
                    ["codex", "exec", "--sandbox", "read-only", "{system_prompt}\n\n{prompt}"]],
+        "advisory_claude": [["claude", "-p", "{prompt}", "--model", "{review_model}",
+                             "--effort", "{review_effort}", "--tools", "Read,Grep,Glob",
+                             "--strict-mcp-config", "--system-prompt", "{advisory_system_prompt}",
+                             "--max-turns", "{review_max_turns}", "--output-format", "json"]],
+        "advisory_agy": [["agy", "--mode", "plan", "--print",
+                          "{advisory_system_prompt}\n{no_shell}\n\n{prompt}"]],
     },
     # relay lean — 도구를 줄인 대화형 Claude (실측 base 35.1k → 7.9k)
     "lean": {"tools": "Read,Edit,Write,Bash,Grep,Glob", "strict_mcp": True, "effort": "",

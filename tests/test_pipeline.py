@@ -27,6 +27,12 @@ text = "VERDICT: CHANGES\\n1. app.py:3 add a comment" if n == 0 else "VERDICT: A
 print(json.dumps({"result": text, "num_turns": 1, "usage": {"input_tokens": 5,
       "cache_creation_input_tokens": 3000, "cache_read_input_tokens": 1000, "output_tokens": 40}}))
 """
+ADVISORY_STUB = """import json, sys
+prompt = sys.argv[1]
+assert 'Context pack' in prompt and 'Brief' in prompt
+print(json.dumps({'result': 'independent advice', 'num_turns': 1,
+                  'usage': {'output_tokens': 3}}))
+"""
 
 
 def git(root, *args):
@@ -42,6 +48,7 @@ class PipelineTest(unittest.TestCase):
         self.addCleanup(lambda: [p.unlink() for p in self.bin.iterdir()] and None or self.bin.rmdir())
         for name, body in (("explore.py", EXPLORE_STUB), ("implement.py", IMPLEMENT_STUB), ("review.py", REVIEW_STUB)):
             (self.bin / name).write_text(body)
+        (self.bin / "advisory.py").write_text(ADVISORY_STUB)
         git(self.root, "init", "-q")
         git(self.root, "config", "user.email", "t@t")
         git(self.root, "config", "user.name", "t")
@@ -57,6 +64,8 @@ class PipelineTest(unittest.TestCase):
             "explore": [["missing-explorer-xyz", "-p", "{prompt}"], [py, str(self.bin / "explore.py"), "{prompt}"]],
             "implement": [[py, str(self.bin / "implement.py")]],          # stdin 으로 프롬프트
             "review": [[py, str(self.bin / "review.py"), "{prompt}", "--model", "{review_model}"]],
+            "advisory_claude": [[py, str(self.bin / "advisory.py"), "{prompt}"]],
+            "advisory_agy": [[py, str(self.bin / "advisory.py"), "{prompt}"]],
         }
         self.conf["pipeline"]["verify"] = f'{py} -c "print(\'ok\')"'
         self.logs = []
@@ -77,6 +86,14 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(run["verdict"], "APPROVE")
         explore = [s for s in report.stages if s.stage == "explore"][0]
         self.assertTrue(explore.runner.endswith("python3") or "python" in explore.runner)  # fallback 사용
+
+    def test_read_only_advisory_writes_agent_specific_output(self):
+        (self.task / "pack.md").write_text("source context")
+        rc, text, report = pipeline.advise(self.root, self.task, self.conf, "claude")
+        self.assertEqual(rc, 0)
+        self.assertEqual(text, "independent advice")
+        self.assertEqual(report["status"], "ok")
+        self.assertEqual((self.task / "out-claude.md").read_text().strip(), "independent advice")
 
     def test_explore_skipped_when_report_exists_and_missing_runner(self):
         (self.task / "explore.md").write_text("- app.py:1-1")

@@ -74,6 +74,23 @@ REVIEW_PROMPT = """Review task {task_id}.
 {diff}
 """
 
+ADVISORY_SYSTEM_PROMPT = (
+    "You are a read-only advisor. Read only files named by the task brief or context pack. "
+    "Do not edit files, run shell commands, inspect unrelated git changes, or use a code-review verdict format. "
+    "Answer the requested questions directly, distinguish evidence from inference, and state trade-offs."
+)
+
+ADVISORY_PROMPT = """Provide independent advice for task {task_id}.
+
+# Brief
+{brief}
+
+# Context pack
+{pack}
+
+Write the complete answer in the language requested by the brief. Do not modify files.
+"""
+
 
 @dataclass
 class StageResult:
@@ -104,6 +121,36 @@ class RunReport:
 
 class RunnerMissing(RuntimeError):
     pass
+
+
+def advise(root: Path, task: Path, conf: dict, agent: str) -> tuple[int, str, dict]:
+    """Run one named agent in read-only advisory mode and persist its answer."""
+    stage = f"advisory_{agent}"
+    template = installed_runners(conf["runners"].get(stage, []))[0]
+    p = conf["pipeline"]
+    values = {"review_model": p["review_model"], "review_effort": p["review_effort"],
+              "review_max_turns": p["review_max_turns"], "no_shell": NO_SHELL_NOTE,
+              "advisory_system_prompt": ADVISORY_SYSTEM_PROMPT}
+
+    def read(name: str, default: str) -> str:
+        path = task / name
+        return path.read_text(encoding="utf-8").strip() if path.is_file() else default
+
+    prompt = ADVISORY_PROMPT.format(task_id=task.name, brief=read("brief.md", "(no brief)"),
+                                    pack=read("pack.md", "(no pack)"))
+    started = time.monotonic()
+    rc, stdout, stderr = run_command(template, prompt, values, root, p["timeout"])
+    text, usage = parse_claude_json(stdout) if agent == "claude" else (stdout.strip(), {})
+    if rc == 0 and (not text or quota_exhausted(stdout + stderr)):
+        rc = 2
+    if text:
+        (task / f"out-{agent}.md").write_text(text.rstrip() + "\n", encoding="utf-8")
+    report = {"task": task.name, "agent": agent, "status": "ok" if rc == 0 else "failed",
+              "seconds": round(time.monotonic() - started, 3), "runner": template[0],
+              "usage": usage, "error": stderr.strip()[-500:] if rc else ""}
+    (task / f"advisory-{agent}.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return rc, text, report
 
 
 def _fill(template: list[str], values: dict) -> list[str]:
