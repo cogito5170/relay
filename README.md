@@ -148,6 +148,8 @@ relay advise 002 --agent agy     # Agy의 독립 자문
 | `relay events [--tail N]` | MCP 도구 호출 감사 로그 요약 (클라이언트 · 도구 · 공급 토큰) |
 | `relay lean [--print] [-- claude 인자]` | 도구를 줄인 대화형 Claude (base −78% 실측) |
 | `relay run [id] [--only/--skip 단계] [--verify CMD] [--dry-run]` | 파이프라인: explore → pack → implement → verify → review, CHANGES 면 재구현 |
+| `relay archive [세션] [--transcript F] [--stats]` | 세션 대화를 `.relay/archive` 로 보관 (원문 + 깃발 색인). hook 이 컨텍스트 60k 에서, 압축 직전에 자동으로 한다 |
+| `relay recall <낱말> [--open ID --query Q \| --lines A-B] [--supersede OLD NEW] [--retract ID]` | 보관된 대화를 색인으로 찾고, 원문은 필요한 줄만 → [docs/archive.md](docs/archive.md) |
 | `relay advise [id] --agent claude\|agy` | brief/pack 기반 읽기 전용 자문. 결과는 `out-claude.md` 또는 `out-agy.md` |
 | `relay cloud-run --task-id ID --agent AGENT --instruction TEXT --output DIR` | GitHub 호스팅 러너용 요청 검증·감사 산출물 생성 (Phase 1, 모델 호출 없음) |
 | `relay why [session]` | 세션의 캐시 읽기를 원인별로 분해 (고정 부분 · thinking · Claude 가 쓴 내용 · 명령 출력 …) + 처방 |

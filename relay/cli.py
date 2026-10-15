@@ -11,7 +11,7 @@ from pathlib import Path
 
 from relay import config as cfg
 from relay import pack as packmod
-from relay import (attribution, auto, cloud_job, doctor, events, hooks, pipeline, mcp_server, router, statusline,
+from relay import (archive, attribution, auto, cloud_job, doctor, events, hooks, pipeline, mcp_server, router, statusline,
                    supervisor, tasks, usage)
 from relay.tokens import estimate, human
 
@@ -258,6 +258,57 @@ def cmd_why(args) -> int:
     for cat, cost in cats[:4]:
         if cat in attribution.ADVICE and cost / total >= 0.05:
             print(f"  {cost / total:>4.0%}  {attribution.ADVICE[cat]}")
+    return 0
+
+
+def cmd_archive(args) -> int:
+    root = cfg.find_root()
+    ar = archive.Archive(root)
+    if args.stats:
+        st = ar.stats()
+        print(f"기록 {st['records']}개 (active {st['active']}) · 원문 ~{human(st['tokens'])} tok · {st['by_kind']}")
+        if st["broken_lines"]:
+            print(f"(색인에 깨진 줄 {st['broken_lines']}개 — 건너뜀)")
+        return 0
+    if not (root / ".relay").is_dir():
+        print("`.relay/` 가 없습니다. 먼저 `relay init`.", file=sys.stderr)
+        return 1
+    path = Path(args.transcript) if args.transcript else attribution.find_transcript(args.session)
+    info = archive.archive_transcript(root, path, cfg.load(root))
+    print(f"세션 {info['session'][:8]}: 턴 {info['turns']}개 → 기록 {info['records']}개 + 요약 {info['summary_id']} "
+          f"(새로 적은 줄 {info['added']}개, 원문 ~{human(info['tokens_archived'])} tok)")
+    print("이 대화는 /clear 해도 `relay recall \"낱말\"` 로 되찾을 수 있습니다.")
+    return 0
+
+
+def cmd_recall(args) -> int:
+    root = cfg.find_root()
+    conf = cfg.load(root)
+    ar = archive.Archive(root)
+    if args.supersede:
+        row = ar.supersede(args.supersede[0], args.supersede[1])
+        print(f"{row['id']} → superseded (by {row['superseded_by']})")
+        return 0
+    if args.retract:
+        print(f"{ar.retract(args.retract)['id']} → retracted")
+        return 0
+    if args.open:
+        lines = None
+        if args.lines:
+            a, _, b = args.lines.partition("-")
+            lines = (int(a), int(b or a))
+        print(ar.open(args.open, query=args.query or " ".join(args.words), lines=lines,
+                      budget=args.budget or conf["archive"]["open_budget"]))
+        return 0
+    query = " ".join(args.words)
+    hits = ar.search(query, limit=args.limit, min_score=args.min_score, include_inactive=args.all)
+    if not hits:
+        print(f"'{query}' 와 겹치는 보관 기록이 없습니다.")
+        return 3
+    corr = ar.corrected_by()
+    for score, r in hits:
+        print(f"{score:>3} {ar.line(r, corr)}")
+    print("원문 일부: relay recall --open <id> --query \"낱말\"  (또는 --lines A-B)")
     return 0
 
 
@@ -515,8 +566,27 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_doctor)
 
     s = sub.add_parser("hook", help="Claude Code hook 진입점 (stdin JSON)")
-    s.add_argument("event", choices=["prompt", "pretool", "session"])
+    s.add_argument("event", choices=["prompt", "pretool", "session", "precompact"])
     s.set_defaults(func=lambda a: hooks.main(a.event))
+
+    s = sub.add_parser("archive", help="세션 대화를 .relay/archive 로 보관 (원문 + 깃발 색인)")
+    s.add_argument("session", nargs="?", help="세션 id 접두어 (기본: 현재 프로젝트의 최근 세션)")
+    s.add_argument("--transcript", help="transcript jsonl 경로를 직접 지정")
+    s.add_argument("--stats", action="store_true", help="보관소 현황만")
+    s.set_defaults(func=cmd_archive)
+
+    s = sub.add_parser("recall", help="보관된 대화를 색인으로 찾고, 원문은 필요한 줄만")
+    s.add_argument("words", nargs="*", help="찾을 낱말")
+    s.add_argument("--open", metavar="ID", help="이 기록의 원문 일부 (질의 낱말 주변 줄)")
+    s.add_argument("--query", help="--open 에서 찾을 낱말 (기본: words)")
+    s.add_argument("--lines", help="--open 에서 줄 범위 A-B")
+    s.add_argument("--budget", type=int, help="--open 발췌 최대 토큰")
+    s.add_argument("--limit", type=int, default=5)
+    s.add_argument("--min-score", type=int, default=1)
+    s.add_argument("--all", action="store_true", help="superseded · retracted 도 보기")
+    s.add_argument("--supersede", nargs=2, metavar=("OLD", "NEW"), help="NEW(사용자 말·도구 출력)가 OLD 를 대체")
+    s.add_argument("--retract", metavar="ID", help="틀린 것으로 표시 (지우지 않음)")
+    s.set_defaults(func=cmd_recall)
 
     s = sub.add_parser("watch", help="Claude 세션을 감시 모델(codex → agy)에게 판정받기 (Claude 토큰 0)")
     s.add_argument("session", nargs="?", help="세션 id 접두어 (기본: 현재 프로젝트의 최근 세션)")

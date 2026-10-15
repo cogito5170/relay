@@ -27,6 +27,16 @@ DEFAULTS = {
                            "go test", "mvn ", "gradle", "git log", "docker logs", "kubectl logs",
                            "journalctl", "npm install", "pip install", "find /", "ls -R"],
     },
+    # 컨텍스트 보관소 (relay/archive.py) — 오래된 대화를 세션 밖으로 옮기고, 비슷한 요청일 때만 요약을 불러온다
+    "archive": {
+        "enabled": True,
+        "trigger_context": 60_000,  # 마지막 요청 컨텍스트가 이 이상이면 transcript 를 보관 (gate_context 보다 먼저)
+        "recall": True,             # 프롬프트가 보관된 기록과 겹치면 한 줄 요약을 붙인다
+        "recall_min_score": 3,      # 깃발 하나(3점) 이상 맞아야 '비슷한 문맥' 으로 본다
+        "recall_max_hits": 3,
+        "recall_budget": 400,       # 붙이는 요약의 최대 토큰
+        "open_budget": 800,         # relay recall --open 이 돌려주는 원문 발췌의 최대 토큰
+    },
     # relay run — 토큰 절감 파이프라인
     "pipeline": {
         "max_iterations": 2,        # review 가 CHANGES 면 재구현하는 최대 횟수

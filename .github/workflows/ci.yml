@@ -39,3 +39,6 @@ jobs:
           relay doctor
           relay lean --print | grep -q -- "--tools"
           relay run --dry-run
+          grep -q "relay hook precompact" .claude/settings.local.json
+          relay archive --stats
+          relay recall nothing-here || test $? -eq 3
