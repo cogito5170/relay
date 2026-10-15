@@ -27,6 +27,27 @@ DEFAULTS = {
                            "go test", "mvn ", "gradle", "git log", "docker logs", "kubectl logs",
                            "journalctl", "npm install", "pip install", "find /", "ls -R"],
     },
+    # 컨텍스트 보관소 (relay/archive.py) — 오래된 대화를 세션 밖으로 옮기고, 비슷한 요청일 때만 요약을 불러온다
+    "archive": {
+        "enabled": True,
+        "trigger_context": 60_000,  # 마지막 요청 컨텍스트가 이 이상이면 transcript 를 보관 (gate_context 보다 먼저)
+        "recall": True,             # 프롬프트가 보관된 기록과 겹치면 한 줄 요약을 붙인다
+        "recall_min_score": 3,      # 깃발 하나(3점) 이상 맞아야 '비슷한 문맥' 으로 본다
+        "recall_max_hits": 3,
+        "recall_budget": 400,       # 붙이는 요약의 최대 토큰
+        "open_budget": 800,         # relay recall --open 이 돌려주는 원문 발췌의 최대 토큰
+        # 도메인(주제) 판정 낱말. 프롬프트에 든 낱말 수로 도메인을 정하고 그 도메인의 기록만 불러온다.
+        # 여기 없는 도메인도 config.toml 에 [archive.domains] 로 더하면 된다. 보관이 쌓이면 사용자 말의 깃발로도 배운다.
+        "domains": {
+            "interior": ["실내", "인테리어", "공간 디자인", "공간디자인", "매장", "플래그십", "도면", "평면도", "청사진",
+                         "천장", "벽면", "벽체", "바닥재", "동선", "가구", "젠틀몬스터", "gentle monster", "gentlemonster",
+                         "탬버린즈", "interior", "floor plan", "flagship"],
+            "fashion": ["의류", "패션", "원단", "봉제", "패턴", "실루엣", "룩북", "컬렉션", "착장", "니트",
+                        "셔츠", "자켓", "재킷", "코트", "드레스", "apparel", "garment", "fashion", "fabric"],
+            "software": ["코드", "버그", "테스트", "함수", "리포", "커밋", "배포", "api", "pytest", "hook", "refactor",
+                         "리팩터", "디버그"],
+        },
+    },
     # relay run — 토큰 절감 파이프라인
     "pipeline": {
         "max_iterations": 2,        # review 가 CHANGES 면 재구현하는 최대 횟수

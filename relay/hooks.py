@@ -5,6 +5,9 @@ CLAUDE.md 의 규칙은 모델이 지킬 수도, 안 지킬 수도 있다. hook 
 
 - prompt  (UserPromptSubmit): 컨텍스트·요청 수가 한도를 넘으면 메시지를 막고 /handoff → /clear 를 안내.
                               막힌 메시지는 모델에 가지 않는다. `[force]` 를 넣으면 통과.
+- prompt 는 그 전에 컨텍스트가 archive.trigger_context 를 넘으면 transcript 를 .relay/archive 로 보관하고,
+  막지 않는 메시지가 보관된 기록과 겹치면 한 줄 요약만 붙인다 (relay/archive.py).
+- precompact (PreCompact):    Claude Code 가 대화를 압축하기 직전에 원문을 보관한다 — 압축이 버린 것을 되찾을 길.
 - pretool (PreToolUse):       큰 파일 전체 Read, 너무 넓은 줄 범위 읽기, 출력이 큰 명령의 무제한 실행,
                               (선택) 큰 Write 를 거부하고
                               짧은 이유만 Claude 에게 돌려준다. 이유 수십 토큰으로 수천 토큰의 출력을 막는다.
@@ -18,6 +21,7 @@ import re
 import sys
 from pathlib import Path
 
+from relay import archive
 from relay import auto
 from relay import config as cfg
 from relay import events
@@ -211,20 +215,79 @@ def auto_wrapup(data: dict, conf: dict) -> dict | None:
                  f"한 줄로 턴을 끝내세요. 다음 세션이 이어받습니다.")
 
 
+def archive_if_large(data: dict, conf: dict, force: bool = False) -> dict | None:
+    """컨텍스트가 크면(또는 force) transcript 를 보관소로 옮긴다. 같은 원문은 다시 안 적으므로 매번 불러도 된다."""
+    a = conf["archive"]
+    transcript = data.get("transcript_path")
+    if not a["enabled"] or not transcript or not Path(transcript).is_file():
+        return None
+    root = cfg.find_root(Path(data.get("cwd") or "."))
+    if not (root / ".relay").is_dir():
+        return None
+    if not force:
+        ctx, _ = last_context(Path(transcript))
+        if ctx < a["trigger_context"]:
+            return None
+    info = archive.archive_transcript(root, Path(transcript), conf)
+    if info["added"]:
+        events.append(root, client="hook", profile="-", tool="archive", task=f"turns={info['turns']}",
+                      ok=True, tokens_out=0, avoided=info["tokens_archived"])
+    return info
+
+
+def recall(data: dict, conf: dict) -> dict | None:
+    a = conf["archive"]
+    prompt = data.get("prompt") or ""
+    if not (a["enabled"] and a["recall"]) or prompt.lstrip().startswith("/"):
+        return None
+    root = cfg.find_root(Path(data.get("cwd") or "."))
+    text = archive.recall_context(root, prompt, Path(data.get("transcript_path") or "").stem, conf)
+    if not text:
+        return None
+    if text.startswith(archive.SHIFT_PREFIX):
+        # 앞 도메인의 대화는 아직 이 컨텍스트에 있다. 보관해 두고 /clear 를 권한다 (hook 은 대화를 못 지운다).
+        info = archive_if_large(data, conf, force=True)
+        if info and info["records"]:
+            text = text.replace("\n", " 앞 대화는 .relay/archive 에 보관했으니 /clear 해도 잃지 않습니다.\n", 1) \
+                if "\n" in text else text + " 앞 대화는 .relay/archive 에 보관했으니 /clear 해도 잃지 않습니다."
+    return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": text}}
+
+
+def prompt(data: dict, conf: dict) -> dict | None:
+    """보관(필요하면) → 한도 차단 → 아니면 보관 기록 조회. 감시자 안내와 조회 결과는 하나로 합친다."""
+    info = archive_if_large(data, conf)
+    result = prompt_gate(data, conf) if "prompt_gate" in conf["hooks"]["enabled"] else None
+    if result and result.get("decision") == "block":
+        if info and info["records"]:
+            result["reason"] += (f"\n(이 세션의 대화 {info['turns']}턴은 .relay/archive 에 보관했습니다. "
+                                 f"/clear 뒤 비슷한 요청이면 요약이 자동으로 붙습니다.)")
+        return result
+    found = recall(data, conf)
+    if not found:
+        return result
+    if result:
+        extra = result["hookSpecificOutput"]["additionalContext"]
+        found["hookSpecificOutput"]["additionalContext"] = extra + "\n\n" + found["hookSpecificOutput"]["additionalContext"]
+    return found
+
+
 def session_start(data: dict, conf: dict) -> dict | None:
     """새 세션 · /clear · 자동 압축 직후 현재 task 의 brief/state 를 컨텍스트에 자동으로 넣는다 (/pickup 불필요)."""
     source = data.get("source") or "startup"
     if source not in conf["hooks"]["session_inject"]:
         return None
-    task = auto.current_task(cfg.find_root(Path(data.get("cwd") or ".")))
-    if not task:
-        return None
+    root = cfg.find_root(Path(data.get("cwd") or "."))
+    note = archive.pointer(root) if conf["archive"]["enabled"] and source != "startup" else ""
+    task = auto.current_task(root)
     parts = [f"## {name}\n{(task / name).read_text(encoding='utf-8')[:3000].strip()}"
-             for name in ("brief.md", "state.md") if (task / name).is_file()]
-    if not parts:
+             for name in ("brief.md", "state.md") if task and (task / name).is_file()]
+    if not parts and not note:
         return None
-    text = (f"[relay] 현재 작업 {task.name} ({source}). 아래 상태에서 이어서 진행하세요. "
-            f"작업 단위가 끝나면 {task.relative_to(task.parents[2]).as_posix()}/state.md 를 갱신하세요.\n\n" + "\n\n".join(parts))
+    text = note
+    if parts:
+        text = (f"[relay] 현재 작업 {task.name} ({source}). 아래 상태에서 이어서 진행하세요. "
+                f"작업 단위가 끝나면 {task.relative_to(task.parents[2]).as_posix()}/state.md 를 갱신하세요.\n\n"
+                + "\n\n".join(parts) + (f"\n\n{note}" if note else ""))
     return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}
 
 
@@ -249,8 +312,11 @@ def main(event: str, stdin=sys.stdin, stdout=sys.stdout) -> int:
         data = json.load(stdin)
         cwd = Path(data.get("cwd") or ".")
         conf = cfg.load(cwd)
-        if event == "prompt" and "prompt_gate" in conf["hooks"]["enabled"]:
-            result = prompt_gate(data, conf)
+        if event == "prompt":
+            result = prompt(data, conf)
+        elif event == "precompact":
+            archive_if_large(data, conf, force=True)
+            result = None
         elif event == "pretool":
             result = pre_tool(data, conf)
         elif event == "session":
@@ -269,6 +335,7 @@ def settings_entries() -> dict:
         "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "relay hook prompt"}]}],
         "PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "relay hook pretool"}]}],
         "SessionStart": [{"hooks": [{"type": "command", "command": "relay hook session"}]}],
+        "PreCompact": [{"hooks": [{"type": "command", "command": "relay hook precompact"}]}],
     }
 
 
