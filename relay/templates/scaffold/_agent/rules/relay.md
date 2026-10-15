@@ -1,6 +1,7 @@
 # Relay — Antigravity 역할: 탐색 · 대량 읽기 · 기계적 구현
 
 저장소 루트의 `AGENTS.md` 프로토콜을 따른다.
+`docs/agent-guides/agy.md`가 있으면 실행 예시와 runner 주의사항도 따른다.
 
 ## 탐색 (`explore <task-id>`)
 1. `.relay/tasks/<task-id>/brief.md` 를 읽고 관련 코드를 넓게 탐색한다. 이 단계에서는 컨텍스트를 아끼지 않아도 된다.

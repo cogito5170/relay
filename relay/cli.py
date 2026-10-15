@@ -417,7 +417,15 @@ def cmd_cloud_run(args) -> int:
         mode=args.mode,
         instruction=args.instruction,
     )
-    report = cloud_job.run_dry(request, Path(args.output))
+    if args.dry_run:
+        report = cloud_job.run_dry(request, Path(args.output))
+    else:
+        report = cloud_job.run_openai(
+            request,
+            Path(args.output),
+            api_key=os.environ.get("OPENAI_API_KEY", ""),
+            model=os.environ.get("OPENAI_MODEL", ""),
+        )
     print(json.dumps(report, ensure_ascii=False))
     return 0
 
@@ -556,13 +564,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--ping", action="store_true", help="각 도구에 짧은 요청 1회 (토큰 소량 사용)")
     s.set_defaults(func=cmd_check)
 
-    s = sub.add_parser("cloud-run", help="클라우드 러너 요청 검증 및 감사 산출물 생성 (Phase 1)")
+    s = sub.add_parser("cloud-run", help="클라우드 AI 요청 실행 및 감사 산출물 생성")
     s.add_argument("--task-id", required=True)
     s.add_argument("--agent", required=True, choices=cloud_job.AGENTS)
     s.add_argument("--mode", default="advisory", choices=cloud_job.MODES)
     s.add_argument("--instruction", required=True)
     s.add_argument("--output", default="cloud-result")
-    s.add_argument("--dry-run", action="store_true", help="Phase 1 호환 플래그 (현재 항상 dry-run)")
+    s.add_argument("--dry-run", action="store_true", help="모델을 호출하지 않고 요청과 실행 환경만 검증")
     s.set_defaults(func=cmd_cloud_run)
 
     s = sub.add_parser("statusline", help="Claude Code statusline (stdin JSON)")

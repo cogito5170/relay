@@ -2,6 +2,12 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.auto.tfvars
+crash.log
 .venv/
 # relay init 이 설치하는 로컬 전용 파일 (경로·한도가 머신마다 다르다).
 # 단, task 기록(.relay/tasks/)은 Codex · Claude · agy 가 공유하도록 git 에 올린다.
