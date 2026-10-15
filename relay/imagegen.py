@@ -16,7 +16,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from relay.pipeline import RunnerMissing, _fill, installed_runners
+from relay.pipeline import RunnerMissing, _fill, installed_runners, quota_exhausted
 
 SPEC_FILE = "image-spec.json"
 PROMPT_FILE = "image-prompt.md"
@@ -157,7 +157,13 @@ def generate(task: Path, conf: dict, log=print) -> tuple[int, dict]:
         if image:
             report.update(status="ok", image=image.name)
             break
-        if "IMAGE_TOOL_UNAVAILABLE" in out:
+        if quota_exhausted(out):
+            # 다음 후보도 같은 ChatGPT 계정이라 다시 시도해도 같은 결과다
+            limit = next((l.strip() for l in out.splitlines() if quota_exhausted(l)), "")
+            report["error"] = f"Codex 사용 한도 소진: {limit}"
+            break
+        # codex 는 프롬프트를 출력에 되풀이하므로, 마커가 한 줄 전체일 때만 인정한다
+        if any(line.strip() == "IMAGE_TOOL_UNAVAILABLE" for line in out.splitlines()):
             report["error"] = "Codex 에 이미지 생성 도구가 없습니다 (ChatGPT 로그인·codex 버전 확인)"
             break
 

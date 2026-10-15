@@ -25,6 +25,12 @@ d.mkdir(parents=True, exist_ok=True)
 print("done")
 """ % PNG
 
+QUOTA_STUB = """import sys
+print(sys.argv[1])
+print("ERROR: You've hit your usage limit. Upgrade to Plus to continue using Codex")
+sys.exit(1)
+"""
+
 UNAVAILABLE_STUB = """import pathlib
 pathlib.Path("image-prompt.md").write_text("# Prompt\\nx\\n")
 print("IMAGE_TOOL_UNAVAILABLE")
@@ -101,6 +107,13 @@ class ImageGenerateTest(unittest.TestCase):
         self.assertEqual(len(report["attempts"]), 1)
         self.assertIn("이미지 생성 도구", report["error"])
         self.assertFalse((self.task / "image.png").exists())
+
+    def test_usage_limit_is_reported_not_mistaken_for_missing_tool(self):
+        rc, report = imagegen.generate(self.task, self.conf(QUOTA_STUB, DIRECT_STUB), log=lambda *_: None)
+        self.assertEqual(rc, 2)
+        self.assertEqual(len(report["attempts"]), 1)
+        self.assertIn("사용 한도", report["error"])
+        self.assertIn("Upgrade to Plus", report["error"])
 
     def test_falls_through_to_next_runner_on_failure(self):
         rc, report = imagegen.generate(self.task, self.conf("import sys; sys.exit(2)", DIRECT_STUB),
