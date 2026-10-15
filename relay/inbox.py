@@ -146,7 +146,8 @@ def publish(repo: Path, branch: str, task: str, response: dict, all_changes: boo
     task_dir.mkdir(parents=True, exist_ok=True)
     (task_dir / RESPONSE).write_text(json.dumps(response, ensure_ascii=False, indent=2) + "\n",
                                      encoding="utf-8")
-    git(repo, "add", "-A", *([] if all_changes else ["--", f"{TASKS}/{task}"]))
+    # -f: 저장소가 .relay/ 를 .gitignore 로 숨겨도 이 task 폴더의 결과는 올린다
+    git(repo, "add", "-A", *([] if all_changes else ["-f", "--", f"{TASKS}/{task}"]))
     git(repo, "commit", "-q", "-m", f"relay inbox: {task} {response.get('action', 'request')} "
         f"{response['status']}")
     for attempt in range(2):
@@ -196,8 +197,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--repo", type=Path, required=True,
-                        help="이 워커 전용 클론 (작업용 체크아웃과 분리)")
+    parser.add_argument("--repo", type=Path, action="append", required=True,
+                        help="이 워커 전용 클론 (작업용 체크아웃과 분리). 반복하면 여러 저장소를 차례로 본다")
     parser.add_argument("--relay", help="실행할 relay (기본: 지금 실행 중인 설치본 = python -m relay)")
     parser.add_argument("--branch", action="append", dest="branches",
                         help=f"감시할 브랜치 glob (반복 가능, 기본: {' '.join(DEFAULT_BRANCHES)})")
@@ -205,12 +206,22 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def run(args) -> int:
-    repo = args.repo.expanduser().resolve()
-    if not (repo / ".git").is_dir():
-        raise FileNotFoundError(f"git 클론이 아닙니다: {repo}")
+    repos = [r.expanduser().resolve() for r in args.repo]
+    if not any((repo / ".git").is_dir() for repo in repos):
+        raise FileNotFoundError(f"git 클론이 아닙니다: {', '.join(map(str, repos))}")
     # 워커는 클론을 요청 브랜치로 체크아웃하므로, 클론 안의 코드가 아니라 설치된 relay 를 실행한다.
     relay = [args.relay] if args.relay else [sys.executable, "-m", "relay"]
-    return run_once(repo, relay, args.branches or list(DEFAULT_BRANCHES), args.timeout)
+    rc = 0
+    for repo in repos:  # 한 저장소가 없거나 실패해도 다음 저장소는 처리한다
+        if not (repo / ".git").is_dir():
+            print(f"{timestamp()} git 클론이 아니라 건너뜀: {repo}", file=sys.stderr)
+            continue
+        try:
+            rc = max(rc, run_once(repo, relay, args.branches or list(DEFAULT_BRANCHES), args.timeout))
+        except RuntimeError as exc:
+            print(f"{timestamp()} {repo.name}: {exc}", file=sys.stderr)
+            rc = 1
+    return rc
 
 
 if __name__ == "__main__":
