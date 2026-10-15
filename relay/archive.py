@@ -22,6 +22,12 @@
             summary          다른 기록의 요약. 그 자체로는 사실이 아니며 `sources` 를 가진다
     status  active · superseded (새 사용자 말이 대체) · retracted (틀린 것으로 밝혀짐)
 
+도메인(주제)이 바뀌면 앞 도메인의 기억이 섞여 온다 — context biasing 의 가장 흔한 꼴이다
+(실내 디자인을 하다 의류 디자인으로 넘어갔는데 앞의 재료·브랜드·치수가 따라오는 것). 그래서 기록마다
+`domain` 을 달고, 프롬프트의 도메인을 코드로 판정해 **그 도메인의 기록만** 불러온다. 도메인이 바뀌면
+"이전 도메인의 결정을 적용하지 마라" 는 한 줄을 붙인다. 판정은 `archive.domains` 낱말(설정) + 그 도메인에
+보관된 사용자 말의 깃발(학습)로 하며, 모델을 부르지 않는다.
+
 지키는 규칙 (tests/test_archive.py 가 하나씩 붙든다)
 - 아무것도 지우지 않는다. 상태 변경은 같은 id 의 새 줄이고, 조회는 id 별 마지막 줄을 본다.
 - 모델 추론은 사실로 올라가지 않는다. 조회 결과에 `추론·미검증` 이 붙고, 같은 점수면 사용자 말과
@@ -105,6 +111,30 @@ def digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
 
 
+# ---------------------------------------------------------------- 도메인 판정 (모델 호출 없음)
+
+GENERAL = "general"
+SHIFT_PREFIX = "[relay] 주제 전환"
+
+
+def detect_domain(text: str, domains: dict, learned: dict | None = None, min_score: int = 2) -> tuple[str, int]:
+    """(도메인, 점수). 설정 낱말 맞음 2점 · 학습 깃발 맞음 1점. min_score 미만이면 (general, 점수).
+    낱말은 부분 일치를 본다 (한국어는 조사가 붙고 '의류디자인' 처럼 붙여 쓴다)."""
+    low = (text or "").lower()
+    words = set(terms(text))
+    best, best_score, second = GENERAL, 0, 0
+    for name, keys in domains.items():
+        score = 2 * sum(1 for k in keys if k.lower() in low)
+        score += sum(1 for f in (learned or {}).get(name, ()) if f in words)
+        if score > best_score:
+            best, best_score, second = name, score, best_score
+        elif score > second:
+            second = score
+    if best_score < min_score or best_score == second:      # 비기면 판정하지 않는다
+        return GENERAL, best_score
+    return best, best_score
+
+
 # ---------------------------------------------------------------- 저장소
 
 class Archive:
@@ -156,7 +186,7 @@ class Archive:
             self._latest[row["id"]] = row
 
     def add(self, text: str, kind: str, session: str = "", turn: int = 0, sources: list[str] | None = None,
-            flags: list[str] | None = None, summary: str = "") -> tuple[dict | None, bool]:
+            flags: list[str] | None = None, summary: str = "", domain: str = GENERAL) -> tuple[dict | None, bool]:
         """원문을 chunks/ 에 두고 색인 한 줄을 붙인다. (기록, 새로 적었나). 빈 원문은 (None, False)."""
         if kind not in KINDS:
             raise ValueError(f"알 수 없는 종류: {kind}")
@@ -179,13 +209,13 @@ class Archive:
         row = {"id": rid, "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                "kind": kind, "status": "active", "flags": fl, "summary": summary or summary_of(text),
                "chunk": chunk.relative_to(self.dir).as_posix(), "hash": h, "tokens": estimate(text),
-               "lines": text.count("\n") + 1, "session": session, "turn": turn}
+               "lines": text.count("\n") + 1, "session": session, "turn": turn, "domain": domain or GENERAL}
         if sources:
             row["sources"] = list(sources)
         if kind == "user_stated" and CORRECTION_CUE.search(text):
             mine = set(fl)
             older = [r for r in self.records() if r["kind"] != "summary" and r["status"] == "active"
-                     and len(mine & set(r["flags"])) >= 2]
+                     and r.get("domain", GENERAL) == (domain or GENERAL) and len(mine & set(r["flags"])) >= 2]
             if older:
                 row["conflicts_with"] = [r["id"] for r in older]
         self._append(row)
@@ -217,8 +247,10 @@ class Archive:
 
     # 조회 -----------------------------------------------------------
     def search(self, query: str, limit: int = 3, min_score: int = 3, exclude_session: str = "",
-               include_inactive: bool = False) -> list[tuple[int, dict]]:
+               include_inactive: bool = False, domain: str = "") -> list[tuple[int, dict]]:
         """깃발 맞음 3점 · 요약 등장 1점. min_score 미만이면 '비슷한 문맥 아님' 으로 보고 버린다.
+        domain 을 주면 그 도메인의 기록만 본다 (general 로 남은 기록도 뺀다 — 어느 도메인 것인지 모르는
+        기억이 새 도메인에 섞이는 것이 막으려는 병이다).
         순서: 정정(conflicts_with 가 있는 사용자 말) > 점수 > 믿음(TRUST) > 최근."""
         q = set(terms(query))
         if not q:
@@ -229,6 +261,8 @@ class Archive:
                 continue
             if exclude_session and r.get("session") == exclude_session:
                 continue        # 지금 세션의 기록은 이미 컨텍스트에 있다
+            if domain and r.get("domain", GENERAL) != domain:
+                continue
             flags = r["flags"]
             summ = r["summary"].lower()
             s = 0
@@ -259,7 +293,8 @@ class Archive:
         if corrections and r["id"] in corrections:
             notes.append(f"이후 정정 있음 {corrections[r['id']]}")
         note = f" ({'; '.join(notes)})" if notes else ""
-        return (f"- {r['id']} [{LABEL[r['kind']]}]{note} {r['summary']} "
+        dom = r.get("domain", GENERAL)
+        return (f"- {r['id']} [{LABEL[r['kind']]}{'' if dom == GENERAL else ' · ' + dom}]{note} {r['summary']} "
                 f"<{r['lines']}줄 ~{r['tokens']}tok · {'·'.join(r['flags'][:5])}>")
 
     def open(self, rid: str, query: str = "", lines: tuple[int, int] | None = None, window: int = 2,
@@ -301,11 +336,40 @@ class Archive:
             prev = n
         return "\n".join(out)
 
+    def learned_flags(self, per_domain: int = 40) -> dict[str, list[str]]:
+        """도메인마다 보관된 사용자 말에서 잦은 깃발 — 설정에 없는 낱말로도 도메인을 알아보게 한다.
+        두 도메인 이상에 나오는 깃발은 뺀다 (무드보드·레이아웃처럼 도메인을 가르지 못하는 낱말)."""
+        counts: dict[str, Counter] = {}
+        for r in self.records():
+            d = r.get("domain", GENERAL)
+            if r["kind"] == "user_stated" and d != GENERAL and r["status"] == "active":
+                counts.setdefault(d, Counter()).update(r["flags"])
+        shared = Counter(f for c in counts.values() for f in c)
+        return {d: [f for f, _ in c.most_common() if shared[f] == 1][:per_domain] for d, c in counts.items()}
+
+    def _state_path(self) -> Path:
+        return self.dir / "domains.json"
+
+    def state(self) -> dict:
+        try:
+            return json.loads(self._state_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+
+    def set_state(self, session: str, domain: str) -> None:
+        st = self.state()
+        st[session] = domain
+        st["_last"] = domain
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self._state_path().write_text(json.dumps(st, ensure_ascii=False), encoding="utf-8")
+
     def stats(self) -> dict:
         recs = self.records()
         by_kind = Counter(r["kind"] for r in recs)
+        by_domain = Counter(r.get("domain", GENERAL) for r in recs)
         return {"records": len(recs), "active": sum(r["status"] == "active" for r in recs),
                 "tokens": sum(r["tokens"] for r in recs), "by_kind": dict(by_kind),
+                "by_domain": dict(by_domain),
                 "broken_lines": self._lines()[1]}
 
 
@@ -377,22 +441,32 @@ def archive_transcript(root: Path, path: Path, conf: dict | None = None) -> dict
     ts = turns(Path(path))
     ids, added, archived = [], 0, 0
     user_lines, fact_labels = [], []
+    domains = ((conf or {}).get("archive") or {}).get("domains") or {}
+    learned = ar.learned_flags()
+    current = GENERAL
+    seen_domains: Counter = Counter()
     for i, t in enumerate(ts, 1):
+        found, _ = detect_domain(t["user"], domains, learned)
+        current = found if found != GENERAL else current     # 판정이 안 되면 앞 턴의 도메인을 잇는다
+        seen_domains[current] += 1
         asked = flags_of(t["user"], "user_stated")[:4]   # 같은 턴의 기록은 그 턴의 질문으로도 찾힌다
         for kind, text in (("user_stated", t["user"]), ("source_fact", "\n\n".join(t["facts"])),
                            ("model_inference", "\n\n".join(t["model"]))):
             own = flags_of(text, kind)
             fl = own if kind == "user_stated" else list(dict.fromkeys(asked + own))[:MAX_FLAGS]
-            rec, new = ar.add(text, kind, session=session, turn=i, flags=fl)
+            rec, new = ar.add(text, kind, session=session, turn=i, flags=fl, domain=current)
             if rec:
                 ids.append(rec["id"])
                 added += new
                 archived += rec["tokens"]
         user_lines.append(summary_of(t["user"]))
         fact_labels += [f.splitlines()[0].removeprefix("### ") for f in t["facts"]]
+    if current != GENERAL:
+        ar.set_state(session, current)        # 다음 세션이 '직전 도메인' 을 알 수 있게
     summary_id = ""
     if ids:
         rec, new = ar.add(session_digest(session, user_lines, fact_labels), "summary", session=session,
+                          domain=seen_domains.most_common(1)[0][0] if len(seen_domains) == 1 else GENERAL,
                           sources=ids, summary=f"세션 {session[:8]}: 턴 {len(ts)}개 — " + " / ".join(user_lines[-3:]))
         summary_id = rec["id"]
         added += new
@@ -414,21 +488,39 @@ def session_digest(session: str, user_lines: list[str], fact_labels: list[str], 
 
 # ---------------------------------------------------------------- hook 에서 쓰는 조각
 
+def current_domain(ar: "Archive", prompt: str, session: str, conf: dict) -> tuple[str, str]:
+    """(이번 프롬프트의 도메인, 직전 도메인). 프롬프트로 판정이 안 되면 이 세션의 도메인을 잇는다.
+    직전 도메인은 이 세션의 것, 없으면 마지막으로 쓴 도메인 (새 세션에서 주제를 바꾼 경우)."""
+    st = ar.state()
+    before = st.get(session) or st.get("_last") or GENERAL
+    found, _ = detect_domain(prompt, conf["archive"].get("domains") or {}, ar.learned_flags())
+    now = found if found != GENERAL else st.get(session, GENERAL)
+    return now, before
+
+
 def recall_context(root: Path, prompt: str, session: str, conf: dict) -> str:
-    """비슷한 문맥일 때만 한 줄 요약들을 돌려준다. 아니면 '' (토큰 0)."""
+    """비슷한 문맥일 때만 한 줄 요약들을 돌려준다. 아니면 '' (토큰 0).
+    도메인이 판정되면 그 도메인의 기록만 보고, 도메인이 바뀌었으면 전환 안내를 한 줄 붙인다."""
     a = conf["archive"]
     ar = Archive(root)
+    now, before = current_domain(ar, prompt, session, conf)
+    notice = ""
+    if now != GENERAL:
+        if before not in (GENERAL, now):
+            notice = (f"{SHIFT_PREFIX}: {before} → {now}. 앞의 {before} 작업에서 정한 재료·브랜드·치수·결정은 "
+                      f"이 요청에 적용하지 마세요 (필요하면 사용자에게 확인). 보관 기록도 {now} 것만 불러옵니다.")
+        ar.set_state(session, now)
     if not ar.index_path.is_file():
-        return ""
+        return notice
     hits, seen = [], set()
     for score, r in ar.search(prompt, limit=a["recall_max_hits"] * 3, min_score=a["recall_min_score"],
-                              exclude_session=session):
+                              exclude_session=session, domain=now if now != GENERAL else ""):
         if (r["kind"], r["summary"]) not in seen:      # 같은 파일을 여러 번 읽은 기록은 한 줄만
             seen.add((r["kind"], r["summary"]))
             hits.append((score, r))
     hits = hits[:a["recall_max_hits"]]
     if not hits:
-        return ""
+        return notice
     corr = ar.corrected_by()
     out = ["[relay recall] 보관된 이전 대화 중 이 요청과 겹치는 기록 (요약만. 필요할 때만 "
            "`relay recall --open <id> --query \"낱말\"` 로 원문 일부를 보세요. 추론·미검증은 사실이 아닙니다):"]
@@ -439,7 +531,8 @@ def recall_context(root: Path, prompt: str, session: str, conf: dict) -> str:
             break
         out.append(ln)
         used += estimate(ln)
-    return "\n".join(out) if len(out) > 1 else ""
+    body = "\n".join(out) if len(out) > 1 else ""
+    return "\n".join(x for x in (notice, body) if x)
 
 
 def pointer(root: Path) -> str:
@@ -450,5 +543,6 @@ def pointer(root: Path) -> str:
     st = ar.stats()
     if not st["active"]:
         return ""
-    return (f"[relay] 이전 대화 {st['active']}개 기록(~{st['tokens']}tok)은 .relay/archive 에 보관돼 컨텍스트에 없습니다. "
+    doms = ", ".join(f"{d} {n}" for d, n in st["by_domain"].items() if d != GENERAL)
+    return (f"[relay] 이전 대화 {st['active']}개 기록(~{st['tokens']}tok{', 도메인별 ' + doms if doms else ''})은 .relay/archive 에 보관돼 컨텍스트에 없습니다. "
             f"비슷한 요청이면 hook 이 요약을 붙입니다. 직접 찾을 때: `relay recall \"낱말\"` (폴더를 훑지 마세요).")

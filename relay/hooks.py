@@ -244,6 +244,12 @@ def recall(data: dict, conf: dict) -> dict | None:
     text = archive.recall_context(root, prompt, Path(data.get("transcript_path") or "").stem, conf)
     if not text:
         return None
+    if text.startswith(archive.SHIFT_PREFIX):
+        # 앞 도메인의 대화는 아직 이 컨텍스트에 있다. 보관해 두고 /clear 를 권한다 (hook 은 대화를 못 지운다).
+        info = archive_if_large(data, conf, force=True)
+        if info and info["records"]:
+            text = text.replace("\n", " 앞 대화는 .relay/archive 에 보관했으니 /clear 해도 잃지 않습니다.\n", 1) \
+                if "\n" in text else text + " 앞 대화는 .relay/archive 에 보관했으니 /clear 해도 잃지 않습니다."
     return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": text}}
 
 

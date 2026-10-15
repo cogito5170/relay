@@ -225,5 +225,89 @@ class HookIntegrationTest(ArchiveBase):
         self.assertIn("PreCompact", settings["hooks"])
 
 
+INTERIOR = [
+    ("젠틀몬스터 성수 플래그십 매장, 벽면은 노출 콘크리트로 하고 무드보드 레이아웃 만들어줘", "out/gm/job.json",
+     "room.wall: concrete\nroom.floor: polished_concrete\nbrand: gentle monster\n"),
+    ("매장 동선 여유 0.3m 로 도면 다시 그려줘", "out/gm/layout.json", "clearance: 0.3\nstops: 3\n"),
+    ("천장 조명은 어두운 갤러리로, 무드보드 레이아웃 색은 검정", "out/gm/moodboard.json", "light: dark_gallery\n"),
+]
+FASHION = [
+    ("의류 컬렉션 룩북 무드보드 레이아웃 잡아줘. 원단은 린넨", "fashion/lookbook.json",
+     "fabric: linen\nsilhouette: oversized\n"),
+    ("셔츠 패턴 실루엣을 오버핏으로", "fashion/shirt.json", "pattern: oversized shirt\n"),
+]
+
+
+class DomainTest(ArchiveBase):
+    """주제가 바뀌면 앞 주제의 기억이 섞이지 않아야 한다 (실내 디자인 → 의류 디자인)."""
+
+    def domains(self):
+        return self.conf["archive"]["domains"]
+
+    def archive_session(self, name, turns):
+        path = write_transcript(self.dir / f"{name}.jsonl", turns, filler=20)
+        return archive.archive_transcript(self.dir, path, self.conf)
+
+    def test_detect_domain(self):
+        self.assertEqual(archive.detect_domain(INTERIOR[0][0], self.domains())[0], "interior")
+        self.assertEqual(archive.detect_domain(FASHION[0][0], self.domains())[0], "fashion")
+        self.assertEqual(archive.detect_domain("오늘 점심 뭐 먹지", self.domains())[0], archive.GENERAL)
+        self.assertEqual(archive.detect_domain("무드보드 레이아웃", self.domains())[0], archive.GENERAL)
+        self.assertEqual(archive.detect_domain("완벽하게 해줘", self.domains())[0], archive.GENERAL)
+
+    def test_records_carry_the_turn_domain(self):
+        self.archive_session("gm", INTERIOR)
+        doms = {r["domain"] for r in self.ar.records()}
+        self.assertEqual(doms, {"interior"})        # 판정이 약한 턴도 앞 턴의 도메인을 잇는다
+
+    def test_new_domain_does_not_pull_old_domain_memory(self):
+        self.archive_session("gm", INTERIOR)
+        prompt = "이제 의류 디자인으로 넘어가자. 의류 컬렉션 무드보드 레이아웃 만들어줘"
+        unfiltered = self.ar.search(prompt, limit=3, min_score=3)               # 도메인을 안 봤다면
+        leaked = estimate("\n".join(self.ar.line(r) for _, r in unfiltered))
+        self.assertTrue(unfiltered)                  # 무드보드·레이아웃이 겹쳐 실내 기록이 끌려온다
+        out = archive.recall_context(self.dir, prompt, "fresh", self.conf)
+        print(f"\n[도메인] 필터 없이 섞여 들어올 실내 기록 ~{leaked} tok ({len(unfiltered)}줄) → 필터 후 0줄,"
+              f" 전환 안내 ~{estimate(out)} tok")
+        self.assertIn("interior → fashion", out)
+        for _, r in unfiltered:
+            self.assertNotIn(r["id"], out)
+        self.assertNotIn("젠틀몬스터", out)
+
+    def test_each_domain_recalls_its_own(self):
+        self.archive_session("gm", INTERIOR)
+        self.archive_session("fa", FASHION)
+        fa = archive.recall_context(self.dir, "의류 무드보드 레이아웃 다시 보자", "s2", self.conf)
+        self.assertIn("린넨", fa)
+        self.assertNotIn("젠틀몬스터", fa)
+        gm = archive.recall_context(self.dir, "젠틀몬스터 매장 무드보드 레이아웃 다시 보자", "s3", self.conf)
+        self.assertIn("젠틀몬스터", gm)
+        self.assertNotIn("린넨", gm)
+        self.assertIn("fashion → interior", gm)
+
+    def test_learned_flags_skip_shared_words(self):
+        self.archive_session("gm", INTERIOR)
+        self.archive_session("fa", FASHION)
+        learned = self.ar.learned_flags()
+        self.assertNotIn("무드보드", learned["interior"])
+        self.assertNotIn("무드보드", learned["fashion"])
+        self.assertIn("린넨", learned["fashion"])
+
+    def test_corrections_stay_inside_their_domain(self):
+        old, _ = self.ar.add("벽면 재료 콘크리트 concrete material", "user_stated", domain="interior")
+        new, _ = self.ar.add("원단 재료 콘크리트 말고 린넨 concrete material", "user_stated", domain="fashion")
+        self.assertNotIn("conflicts_with", new)
+        self.assertEqual(self.ar.get(old["id"])["status"], "active")
+
+    def test_hook_same_session_shift_archives_and_warns(self):
+        path = write_transcript(self.dir / "s.jsonl", INTERIOR, filler=20, ctx=5_000)
+        self.assertIsNone(self.run_hook("prompt", {"prompt": INTERIOR[0][0], "transcript_path": str(path)}))
+        out = self.run_hook("prompt", {"prompt": "이제 의류 컬렉션 룩북 하자", "transcript_path": str(path)})
+        ctx = out["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("interior → fashion", ctx)
+        self.assertIn("/clear", ctx)
+        self.assertTrue(self.ar.records())          # 작은 컨텍스트여도 전환 때는 앞 대화를 보관
+
+
 if __name__ == "__main__":
     unittest.main()
