@@ -45,6 +45,10 @@ task 폴더로 복사하지 못하면 relay 가 `$CODEX_HOME`(기본 `~/.codex`)
 `[runners] image` 로 바꿀 수 있다). Codex 에 이미지 도구가 없으면 `IMAGE_TOOL_UNAVAILABLE` 로 멈추고
 `image-prompt.md` 만 남긴다.
 
+Codex 샌드박스가 파일 쓰기에 실패하는 머신(예: bubblewrap 이 없거나 막힌 Ubuntu VM)에서도 결과는 남는다.
+이미지는 `$CODEX_HOME` 에서 가져오고, 프롬프트는 Codex 가 출력한 `=====PROMPT=====` 블록에서 `image-prompt.md`
+로 저장한다. 샌드박스 경고를 없애려면 `sudo apt install -y bubblewrap`.
+
 ## 클라우드 Claude 세션과 주고받기
 
 클라우드 세션 컨테이너에는 Codex 로그인이 없고 api.openai.com 도 막혀 있다. 그래서 인수인계는 git 이다.

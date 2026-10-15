@@ -25,6 +25,15 @@ d.mkdir(parents=True, exist_ok=True)
 print("done")
 """ % PNG
 
+# 샌드박스가 쓰기를 막은 경우: 파일은 못 쓰고, 이미지는 CODEX_HOME 에, 프롬프트는 출력에만 남는다
+SANDBOX_STUB = """import os, pathlib, sys
+print(sys.argv[1])
+d = pathlib.Path(os.environ["CODEX_HOME"]) / "generated_images" / "sess"
+d.mkdir(parents=True, exist_ok=True)
+(d / "ig_2.png").write_bytes(%r)
+print("=====PROMPT=====\\nA warm flat illustration of three robots.\\n=====END PROMPT=====")
+""" % PNG
+
 QUOTA_STUB = """import sys
 print(sys.argv[1])
 print("ERROR: You've hit your usage limit. Upgrade to Plus to continue using Codex")
@@ -99,6 +108,13 @@ class ImageGenerateTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertTrue(report["source"].endswith("ig_1.png"))
         self.assertEqual((self.task / "image.png").read_bytes(), PNG)
+
+    def test_saves_prompt_from_output_when_sandbox_blocks_writes(self):
+        rc, report = imagegen.generate(self.task, self.conf(SANDBOX_STUB), log=lambda *_: None)
+        self.assertEqual(rc, 0)
+        self.assertEqual(report["prompt_file"], "image-prompt.md")
+        self.assertEqual((self.task / "image-prompt.md").read_text(),
+                         "# Prompt\nA warm flat illustration of three robots.\n")
 
     def test_stops_when_image_tool_is_unavailable(self):
         rc, report = imagegen.generate(self.task, self.conf(UNAVAILABLE_STUB, DIRECT_STUB),
