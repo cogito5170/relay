@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-"""VM inbox worker: run codex / agy for requests that arrive through git.
+"""VM inbox worker (`relay inbox`): run codex / agy for requests that arrive through git.
 
 People and Claude sessions that cannot reach the VM commit
 ``.relay/tasks/<id>/request.json`` to a watched branch and push. Each pass this
@@ -93,7 +92,8 @@ def watched_branches(repo: Path, patterns: list[str]) -> list[str]:
 def pending(repo: Path, branch: str) -> list[tuple[str, bytes]]:
     """(task name, raw request bytes) for requests on origin/<branch> without a matching response."""
     ref = f"origin/{branch}"
-    paths = git(repo, "ls-tree", "-r", "--name-only", ref, "--", TASKS).splitlines()
+    # -z: 한글 등 비 ASCII 경로가 따옴표·8진수로 이스케이프되지 않게 한다
+    paths = [p for p in git(repo, "ls-tree", "-r", "-z", "--name-only", ref, "--", TASKS).split("\0") if p]
     found = []
     for path in paths:
         parts = path.split("/")
@@ -167,9 +167,11 @@ def run_once(repo: Path, relay: list[str], patterns: list[str], timeout: int, lo
         except BlockingIOError:
             return 0
         git(repo, "fetch", "-q", "--prune", "origin")
-        ok = True
-        for branch in watched_branches(repo, patterns):
+        ok, handled = True, 0
+        branches = watched_branches(repo, patterns)
+        for branch in branches:
             for task, raw in pending(repo, branch):
+                handled += 1
                 git(repo, "checkout", "-q", "-f", "-B", "relay-inbox", f"origin/{branch}")
                 git(repo, "clean", "-q", "-fd")
                 log(f"{timestamp()} {branch} {task}: running")
@@ -183,22 +185,32 @@ def run_once(repo: Path, relay: list[str], patterns: list[str], timeout: int, lo
                     continue
                 log(f"{timestamp()} {branch} {task}: {response['status']}")
                 ok = ok and response["status"] == "done"
+        log(f"{timestamp()} 브랜치 {len(branches)}개 확인, 요청 {handled}건 처리")
         return 0 if ok else 1
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(prog="relay inbox", description=__doc__.splitlines()[0])
+    add_arguments(parser)
+    return run(parser.parse_args(argv))
+
+
+def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--repo", type=Path, required=True,
-                        help="dedicated clone owned by this worker (not your working checkout)")
-    parser.add_argument("--relay", default="relay", help="installed relay executable")
+                        help="이 워커 전용 클론 (작업용 체크아웃과 분리)")
+    parser.add_argument("--relay", help="실행할 relay (기본: 지금 실행 중인 설치본 = python -m relay)")
     parser.add_argument("--branch", action="append", dest="branches",
-                        help=f"branch glob to watch (repeatable, default: {' '.join(DEFAULT_BRANCHES)})")
+                        help=f"감시할 브랜치 glob (반복 가능, 기본: {' '.join(DEFAULT_BRANCHES)})")
     parser.add_argument("--timeout", type=int, default=1_800)
-    args = parser.parse_args(argv)
+
+
+def run(args) -> int:
     repo = args.repo.expanduser().resolve()
     if not (repo / ".git").is_dir():
-        parser.error(f"not a git clone: {repo}")
-    return run_once(repo, [args.relay], args.branches or list(DEFAULT_BRANCHES), args.timeout)
+        raise FileNotFoundError(f"git 클론이 아닙니다: {repo}")
+    # 워커는 클론을 요청 브랜치로 체크아웃하므로, 클론 안의 코드가 아니라 설치된 relay 를 실행한다.
+    relay = [args.relay] if args.relay else [sys.executable, "-m", "relay"]
+    return run_once(repo, relay, args.branches or list(DEFAULT_BRANCHES), args.timeout)
 
 
 if __name__ == "__main__":
