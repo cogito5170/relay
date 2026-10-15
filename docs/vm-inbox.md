@@ -34,7 +34,12 @@ git pull   # → .relay/tasks/005-*/response.json (status · exit_code · 출력
 
 ## VM 설치 (한 번, VM 소유자)
 
-1. relay 설치: `pip install --user git+https://github.com/cogito5170/effiency.git` (relay image 가 들어간 버전)
+1. relay 설치 (Ubuntu/Debian 의 시스템 파이썬은 pip 직접 설치를 막으므로 pipx 로):
+   ```bash
+   sudo apt install -y pipx && pipx ensurepath   # 새 셸 열기
+   pipx install git+https://github.com/cogito5170/effiency.git   # → ~/.local/bin/relay
+   ```
+   업데이트는 같은 명령에 `--force`.
 2. 워커 전용 클론 (작업용 체크아웃과 분리):
    ```bash
    mkdir -p ~/relay-inbox && git clone git@github.com:cogito5170/effiency.git ~/relay-inbox/repo
