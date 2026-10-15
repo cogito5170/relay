@@ -79,7 +79,14 @@ DEFAULTS = {
                              "--max-turns", "{review_max_turns}", "--output-format", "json"]],
         "advisory_agy": [["agy", "--mode", "plan", "--print",
                           "{advisory_system_prompt}\n{no_shell}\n\n{prompt}"]],
+        # relay image — Codex 가 의미 스펙을 상세 프롬프트로 펼치고 내장 이미지 도구로 그린다 (ChatGPT 로그인).
+        # 앞 후보는 이미지 생성 기능 플래그를 켠다. 그 플래그를 모르는 codex 버전이면 뒤 후보로 넘어간다.
+        "image": [["codex", "exec", "--sandbox", "workspace-write", "--skip-git-repo-check",
+                   "-c", "features.image_generation=true", "{prompt}"],
+                  ["codex", "exec", "--sandbox", "workspace-write", "--skip-git-repo-check", "{prompt}"]],
     },
+    # relay image — 이미지 한 장 생성 제한 시간(초)
+    "image": {"timeout": 900},
     # relay lean — 도구를 줄인 대화형 Claude (실측 base 35.1k → 7.9k)
     "lean": {"tools": "Read,Edit,Write,Bash,Grep,Glob", "strict_mcp": True, "effort": "",
              # Claude Code 가 이 크기에서 스스로 대화를 압축하고 계속한다 → 사용자가 /clear 할 필요 없음
