@@ -11,8 +11,8 @@ from pathlib import Path
 
 from relay import config as cfg
 from relay import pack as packmod
-from relay import (archive, attribution, auto, cloud_job, doctor, events, hooks, pipeline, mcp_server, router, statusline,
-                   supervisor, tasks, usage)
+from relay import (archive, attribution, auto, cloud_job, doctor, events, hooks, imagegen, pipeline, mcp_server,
+                   router, statusline, supervisor, tasks, usage)
 from relay.tokens import estimate, human
 
 BASELINE = Path.home() / ".relay" / "baseline.json"
@@ -452,6 +452,46 @@ def cmd_advise(args) -> int:
     return rc
 
 
+def cmd_image(args) -> int:
+    root = cfg.find_root()
+    task = tasks.resolve(root, args.task)
+    spec_path = task / imagegen.SPEC_FILE
+    if args.spec:
+        spec = imagegen.load_spec(Path(args.spec))
+        spec_path.write_text(json.dumps(spec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if not spec_path.is_file():
+        raise FileNotFoundError(f"{spec_path.relative_to(root)} 가 없습니다 (--spec 으로 지정)")
+    if args.print_prompt:
+        print(imagegen.build_prompt(imagegen.load_spec(spec_path)))
+        return 0
+    print(f"relay image {task.name} — 스펙 → Codex(상세 프롬프트 + 생성)")
+    rc, report = imagegen.generate(task, cfg.load(root))
+    if rc == 0:
+        print(f"[ok] → {(task / report['image']).relative_to(root)}  ({report['seconds']}s)")
+    else:
+        print(f"[failed] {report.get('error', '')} → {(task / imagegen.REPORT_FILE).relative_to(root)}")
+    return rc
+
+
+def cmd_request(args) -> int:
+    """VM 인박스 워커(scripts/relay_inbox.py)가 처리할 요청을 task 폴더에 쓴다. 커밋·푸시는 호출한 쪽이 한다."""
+    root = cfg.find_root()
+    task = tasks.resolve(root, args.task)
+    request = {"action": args.action, "id": time.strftime("%Y%m%dT%H%M%S")}
+    if args.action == "advise":
+        request["agent"] = "agy"
+    if args.action == "delegate":
+        if not args.agent or not args.instruction:
+            raise ValueError("delegate 는 --agent 와 --instruction 이 필요합니다")
+        request.update(agent=args.agent, instruction=args.instruction)
+    path = task / "request.json"
+    path.write_text(json.dumps(request, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    rel = path.relative_to(root)
+    print(f"{rel} 작성. 다음: git add {rel} && git commit -m 'relay request' && git push")
+    print("VM 워커가 처리하면 같은 브랜치에 response.json 과 결과가 커밋된다 (git pull 로 확인).")
+    return 0
+
+
 def cmd_check(args) -> int:
     if args.ping:
         print("각 도구에 짧은 요청을 보냅니다 (도구당 최대 2분)…", flush=True)
@@ -630,6 +670,19 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("task", nargs="?")
     s.add_argument("--agent", required=True, choices=["claude", "agy"])
     s.set_defaults(func=cmd_advise)
+
+    s = sub.add_parser("image", help="의미 스펙(image-spec.json) → Codex 가 상세 프롬프트를 쓰고 이미지 생성")
+    s.add_argument("task", nargs="?")
+    s.add_argument("--spec", help="스펙 JSON 경로 (task 폴더의 image-spec.json 으로 복사)")
+    s.add_argument("--print-prompt", action="store_true", help="Codex 에 보낼 프롬프트만 출력")
+    s.set_defaults(func=cmd_image)
+
+    s = sub.add_parser("request", help="VM 인박스 워커에 codex/agy 작업 요청 (request.json 작성)")
+    s.add_argument("task")
+    s.add_argument("action", choices=["image", "advise", "delegate"])
+    s.add_argument("--agent", choices=["codex", "agy"], help="delegate 대상")
+    s.add_argument("--instruction", help="delegate 지시문")
+    s.set_defaults(func=cmd_request)
 
     s = sub.add_parser("check", help="claude · codex · agy 설치/응답 진단")
     s.add_argument("--ping", action="store_true", help="각 도구에 짧은 요청 1회 (토큰 소량 사용)")
