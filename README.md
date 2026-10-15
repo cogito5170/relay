@@ -142,6 +142,7 @@ relay run       # explore(agy) → pack → implement(Codex) → verify → revi
 | `relay events [--tail N]` | MCP 도구 호출 감사 로그 요약 (클라이언트 · 도구 · 공급 토큰) |
 | `relay lean [--print] [-- claude 인자]` | 도구를 줄인 대화형 Claude (base −78% 실측) |
 | `relay run [id] [--only/--skip 단계] [--verify CMD] [--dry-run]` | 파이프라인: explore → pack → implement → verify → review, CHANGES 면 재구현 |
+| `relay ask [--setup]` | PDF 에서 드래그한 부분 질문 → 쉬운 설명(agy/codex) · 깊은 질문만 Claude, 수식·그림 HTML → [docs/ask.md](docs/ask.md) |
 | `relay why [session]` | 세션의 캐시 읽기를 원인별로 분해 (고정 부분 · thinking · Claude 가 쓴 내용 · 명령 출력 …) + 처방 |
 | `relay watch [session]` | **감시자**: codex(→agy)가 세션을 보고 `CONTINUE / DELEGATE / HANDOFF / CLEAR` 판정. Claude 토큰 0 |
 | `relay doctor` | 고정 부분 진단: base 크기, CLAUDE.md·@import, MCP 서버 목록, 주간 절감량 |

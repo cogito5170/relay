@@ -78,6 +78,17 @@ DEFAULTS = {
     "lean": {"tools": "Read,Edit,Write,Bash,Grep,Glob", "strict_mcp": True, "effort": "",
              # Claude Code 가 이 크기에서 스스로 대화를 압축하고 계속한다 → 사용자가 /clear 할 필요 없음
              "compact_window": "80k"},
+    # relay ask — PDF 드래그 질문. 쉬운 설명은 agy → codex, 깊은 질문만 Claude 1턴 (도구 없음).
+    "ask": {
+        "easy": [["agy", "--mode", "plan", "--print", "{no_shell}\n\n{prompt}"],
+                 ["codex", "exec", "--sandbox", "read-only", "{prompt}"]],
+        "deep": [["claude", "-p", "{prompt}", "--model", "{model}", "--tools", "", "--strict-mcp-config",
+                  "--system-prompt", "{system_prompt}", "--max-turns", "1", "--output-format", "json"]],
+        "model": "sonnet",
+        "context_chars": 3000,      # 선택 문장 주변에서 잘라 보낼 글자 수
+        "notes": "notes/papers",    # 답이 쌓이는 곳 (qa.md, answers/*.html)
+        "timeout": 300,
+    },
     # relay auto — 세션을 자동으로 순환하는 감독자
     "auto": {
         "max_chunks": 6,             # 새 세션 최대 개수

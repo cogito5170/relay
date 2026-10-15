@@ -11,7 +11,7 @@ from pathlib import Path
 
 from relay import config as cfg
 from relay import pack as packmod
-from relay import (attribution, auto, doctor, events, hooks, pipeline, mcp_server, router, statusline,
+from relay import (ask as askmod, attribution, auto, doctor, events, hooks, pipeline, mcp_server, router, statusline,
                    supervisor, tasks, usage)
 from relay.tokens import estimate, human
 
@@ -401,6 +401,26 @@ def cmd_check(args) -> int:
     return 0
 
 
+def cmd_ask(args) -> int:
+    root = cfg.find_root()
+    if args.setup:
+        script = askmod.install_quick_action(root)
+        print(f"설치: {script}")
+        print("단축어 앱 → 새 단축어 → 이름 'relay ask' → 세부사항(ⓘ)에서 '빠른 동작으로 사용' 켜기,")
+        print("  입력: '텍스트' (모든 앱) → 동작 '셸 스크립트 실행' 추가 → 셸 /bin/bash, 입력 전달 '표준 입력으로'")
+        print(f"  스크립트 칸에 한 줄: {script}")
+        print("시스템 설정 → 키보드 → 키보드 단축키 → 서비스 → 텍스트 → 'relay ask' 에 단축키 지정 (예: ⌥⌘E)")
+        print("처음 실행할 때 미리보기·Chrome·System Events 제어 권한을 묻는다 → 허용")
+        return 0
+    selection = args.text if args.text is not None else ("" if sys.stdin.isatty() else sys.stdin.read())
+    result = askmod.ask(root, cfg.load(root), selection, args.question, args.source or "", args.deep, args.open)
+    where = f"p.{result['page']}" if result["page"] else "쪽 미확인"
+    print(f"답변: {result['runner']} ({'깊게' if result['deep'] else '쉽게'}, {where}) → {result['html'].relative_to(root)}")
+    if result["failures"]:
+        print("건너뛴 러너: " + ", ".join(result["failures"]))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="relay", description="ChatGPT · Antigravity · Claude 토큰 효율 워크플로우")
     sub = p.add_subparsers(dest="command", required=True)
@@ -529,6 +549,15 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("check", help="claude · codex · agy 설치/응답 진단")
     s.add_argument("--ping", action="store_true", help="각 도구에 짧은 요청 1회 (토큰 소량 사용)")
     s.set_defaults(func=cmd_check)
+
+    s = sub.add_parser("ask", help="PDF 에서 드래그한 부분 질문 (쉬운 설명은 agy/codex, 깊은 질문만 Claude)")
+    s.add_argument("--text", help="선택한 텍스트 (생략 시 stdin)")
+    s.add_argument("--question", default="쉽게 설명해줘")
+    s.add_argument("--source", help="PDF 경로 · file:// · http(s) URL")
+    s.add_argument("--deep", action="store_true", help="Claude 로 깊게 (수식 유도 등)")
+    s.add_argument("--open", action="store_true", help="결과 페이지를 브라우저로 열기")
+    s.add_argument("--setup", action="store_true", help="macOS 빠른 동작 스크립트 설치 + 안내")
+    s.set_defaults(func=cmd_ask)
 
     s = sub.add_parser("statusline", help="Claude Code statusline (stdin JSON)")
     s.set_defaults(func=lambda a: statusline.main())
