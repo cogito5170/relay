@@ -3,6 +3,9 @@
 이 저장소는 여러 AI 도구(ChatGPT · Antigravity · Codex · Claude)가 `.relay/tasks/<id>/` 의 파일로 작업을 주고받는다.
 대화 기록이 아니라 **파일이 인수인계의 단위**다.
 
+도구별 실행법은 `docs/agent-guides/README.md`에서 시작한다. 해당 문서가 없는
+프로젝트에서는 아래 기본 프로토콜만 따른다.
+
 | 파일 | 작성자 | 내용 |
 |---|---|---|
 | `brief.md` | 사람 + ChatGPT | 목표 · 제약 · 완료 조건 |

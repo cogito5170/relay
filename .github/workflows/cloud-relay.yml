@@ -1,0 +1,80 @@
+name: Cloud Relay
+
+on:
+  workflow_dispatch:
+    inputs:
+      task_id:
+        description: "Lowercase request id (letters, digits, dot, underscore, hyphen)"
+        required: true
+        default: "phone-smoke"
+        type: string
+      agent:
+        description: "Cloud agent route (Phase 2 currently supports codex only)"
+        required: true
+        default: "codex"
+        type: choice
+        options:
+          - codex
+      instruction:
+        description: "Bounded advisory instruction"
+        required: true
+        default: "Validate the cloud relay execution path."
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloud-relay-${{ github.ref }}-${{ inputs.task_id }}
+  cancel-in-progress: false
+
+jobs:
+  cloud-advisory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      RELAY_TASK_ID: ${{ inputs.task_id }}
+      RELAY_AGENT: ${{ inputs.agent }}
+      RELAY_INSTRUCTION: ${{ inputs.instruction }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Build isolated runner
+        run: docker build --tag relay-cloud:${{ github.sha }} .
+
+      - name: Validate cloud configuration
+        run: |
+          test -n "$OPENAI_API_KEY" || { echo "Missing GitHub Actions secret: OPENAI_API_KEY"; exit 1; }
+          test -n "$OPENAI_MODEL" || { echo "Missing GitHub Actions variable: OPENAI_MODEL"; exit 1; }
+
+      - name: Execute request and generate artifacts
+        run: |
+          mkdir -p "$RUNNER_TEMP/cloud-result"
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --read-only \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --tmpfs /tmp:rw,noexec,nosuid,size=16m \
+            --mount "type=bind,src=$RUNNER_TEMP/cloud-result,dst=/result" \
+            --env OPENAI_API_KEY \
+            --env OPENAI_MODEL \
+            "relay-cloud:${{ github.sha }}" \
+            --task-id "$RELAY_TASK_ID" \
+            --agent "$RELAY_AGENT" \
+            --mode advisory \
+            --instruction "$RELAY_INSTRUCTION" \
+            --output /result
+
+      - name: Upload audit bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: relay-${{ inputs.task_id }}-${{ github.run_number }}
+          path: ${{ runner.temp }}/cloud-result/
+          if-no-files-found: error
+          retention-days: 14
