@@ -59,6 +59,38 @@ git pull   # → .relay/tasks/005-*/response.json (status · exit_code · 출력
 기본으로 `claude/*` 브랜치만 본다 (`--branch` 로 추가). 클라우드 Claude 세션은 자기 `claude/...` 브랜치에만
 푸시할 수 있으므로 이 기본값이면 된다.
 
+## 다른 저장소도 보기 (예: gentleMonster)
+
+워커 하나가 여러 저장소를 본다: `--repo` 를 반복하면 30초마다 차례로 확인한다. 클론이 없는 저장소는 건너뛰고
+나머지는 계속 처리한다. 요청하는 쪽 저장소에는 relay 설정이 없어도 된다 (`relay image` 는 task 폴더만 쓴다).
+
+1. 저장소마다 deploy key 를 따로 만든다 (GitHub 는 같은 키를 두 저장소에 등록하지 못한다):
+   ```bash
+   ssh-keygen -t ed25519 -N "" -f ~/.ssh/relay_gentlemonster
+   cat >> ~/.ssh/config <<'CFG'
+   Host github-gentlemonster
+     HostName github.com
+     User git
+     IdentityFile ~/.ssh/relay_gentlemonster
+     IdentitiesOnly yes
+   CFG
+   cat ~/.ssh/relay_gentlemonster.pub   # → gentleMonster Settings → Deploy keys → Allow write access
+   ```
+2. 워커 전용 클론:
+   ```bash
+   git clone git@github-gentlemonster:cogito5170/gentleMonster.git ~/relay-inbox/gentleMonster
+   git -C ~/relay-inbox/gentleMonster config user.name "relay inbox" && git -C ~/relay-inbox/gentleMonster config user.email "relay-inbox@localhost"
+   ```
+3. 확인 후 타이머에 반영 (`scripts/systemd/relay-inbox.service` 에 이미 두 저장소가 들어 있다):
+   ```bash
+   relay inbox --repo ~/relay-inbox/repo --repo ~/relay-inbox/gentleMonster
+   cp ~/relay-inbox/repo/scripts/systemd/relay-inbox.service ~/.config/systemd/user/
+   systemctl --user daemon-reload && systemctl --user restart relay-inbox.timer
+   ```
+
+요청하는 저장소가 `.relay/` 를 `.gitignore` 로 숨기면 `.relay/tasks/` 는 예외로 열어 둔다
+(`!.relay/tasks/`). 워커는 결과를 `git add -f` 로 올리지만, 요청하는 세션의 `request.json` 이 올라가야 하기 때문이다.
+
 ## 다른 방법을 고르지 않은 이유
 
 - **GitHub Actions self-hosted runner**: 이 저장소는 public 이다. GitHub 는 public 저장소에

@@ -1,9 +1,11 @@
+import argparse
 import json
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from relay import inbox
 
@@ -93,6 +95,20 @@ class InboxRoundTripTest(unittest.TestCase):
         response = json.loads((task / "response.json").read_text())
         self.assertEqual(response["status"], "rejected")
         self.assertFalse((task / "image.png").exists())
+
+    def test_publishes_results_even_when_relay_dir_is_gitignored(self):
+        (self.worker / ".git" / "info" / "exclude").write_text(".relay/*\n")
+        self.assertEqual(self.run_worker(), 0)
+        git(self.author, "pull", "-q", "origin", "claude/x")
+        self.assertTrue((self.author / ".relay" / "tasks" / "005-한글-img" / "response.json").is_file())
+
+    def test_run_accepts_several_repos(self):
+        other = Path(self.tmp.name) / "worker2"
+        git(Path(self.tmp.name), "clone", "-q", str(self.origin), str(other))
+        args = argparse.Namespace(repo=[self.worker, other], relay=None, branches=["main"], timeout=60)
+        with mock.patch.object(inbox, "run_once", return_value=0) as run_once:
+            self.assertEqual(inbox.run(args), 0)
+        self.assertEqual([c.args[0] for c in run_once.call_args_list], [self.worker.resolve(), other.resolve()])
 
     def test_ignores_unwatched_branches(self):
         self.assertEqual(inbox.run_once(self.worker, self.relay, ["main"], 60, log=lambda *_: None), 0)

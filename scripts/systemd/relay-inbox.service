@@ -6,5 +6,6 @@ Description=relay inbox: run codex/agy requests that arrive through git
 Type=oneshot
 # relay 와 codex/agy 가 PATH 에 있어야 한다. 경로는 VM 에 맞게 고친다.
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=%h/.local/bin/relay inbox --repo %h/relay-inbox/repo
+# --repo 를 반복하면 여러 저장소를 본다. 클론이 없는 저장소는 건너뛴다 (docs/vm-inbox.md).
+ExecStart=%h/.local/bin/relay inbox --repo %h/relay-inbox/repo --repo %h/relay-inbox/gentleMonster
 TimeoutStartSec=2h
