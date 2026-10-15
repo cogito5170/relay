@@ -111,6 +111,17 @@ def digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
 
 
+SOURCE_TYPE = {"user_stated": "turn", "source_fact": "tool", "model_inference": "model", "summary": "summary"}
+
+
+def _now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _is_correction(r: dict) -> bool:
+    return bool(r.get("correction") and r.get("conflicts_with"))
+
+
 # ---------------------------------------------------------------- 도메인 판정 (모델 호출 없음)
 
 GENERAL = "general"
@@ -206,44 +217,79 @@ class Archive:
         self.chunks.mkdir(parents=True, exist_ok=True)
         chunk = self.chunks / f"{h}.md"
         chunk.write_text(text + "\n", encoding="utf-8")
-        row = {"id": rid, "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-               "kind": kind, "status": "active", "flags": fl, "summary": summary or summary_of(text),
+        now = _now()
+        # 필드 이름은 gentleMonster memory.Store 의 레코드와 같다 (source · sources · status · supersedes ·
+        # superseded_by · conflicts_with · evidence · correction · created_at · updated_at).
+        row = {"id": rid, "ts": now, "created_at": now, "updated_at": now,
+               "kind": kind, "status": "active", "source": {"type": SOURCE_TYPE[kind], "ref": f"{session}:t{turn}"},
+               "flags": fl, "summary": summary or summary_of(text),
                "chunk": chunk.relative_to(self.dir).as_posix(), "hash": h, "tokens": estimate(text),
-               "lines": text.count("\n") + 1, "session": session, "turn": turn, "domain": domain or GENERAL}
-        if sources:
-            row["sources"] = list(sources)
-        if kind == "user_stated" and CORRECTION_CUE.search(text):
+               "lines": text.count("\n") + 1, "session": session, "turn": turn, "domain": domain or GENERAL,
+               "sources": list(sources or []), "supersedes": [], "superseded_by": None, "conflicts_with": [],
+               "evidence": [], "correction": kind == "user_stated" and bool(CORRECTION_CUE.search(text))}
+        older = []
+        if row["correction"]:
             mine = set(fl)
             older = [r for r in self.records() if r["kind"] != "summary" and r["status"] == "active"
                      and r.get("domain", GENERAL) == (domain or GENERAL) and len(mine & set(r["flags"])) >= 2]
-            if older:
-                row["conflicts_with"] = [r["id"] for r in older]
+            row["conflicts_with"] = [r["id"] for r in older]
         self._append(row)
+        for r in older:          # gentleMonster link_conflict 처럼 양쪽에 잇는다. 덮지는 않는다
+            self._update(r, conflicts_with=sorted(set(r.get("conflicts_with") or []) | {rid}))
         return row, True
 
-    def set_status(self, rid: str, status: str, by: str = "") -> dict:
-        if status not in STATUSES:
-            raise ValueError(f"알 수 없는 상태: {status}")
-        rec = self.get(rid)
-        if not rec:
-            raise LookupError(f"기록이 없다: {rid}")
-        row = {**rec, "status": status, "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-        if by:
-            row["superseded_by"] = by
+    def _update(self, rec: dict, **changes) -> dict:
+        row = {**rec, **changes, "ts": _now(), "updated_at": _now()}
         self._append(row)
         return row
 
-    def supersede(self, old: str, new: str) -> dict:
-        """새 사용자 말(또는 코드가 잰 것)이 예전 기록을 대체한다. 모델 추론으로는 대체하지 않는다."""
-        new_rec = self.get(new)
-        if not new_rec:
-            raise LookupError(f"기록이 없다: {new}")
-        if TRUST[new_rec["kind"]] < 3:
-            raise ValueError("대체는 사용자 말이나 코드가 잰 것으로만 한다 — 모델 추론은 사실을 덮지 못한다")
-        return self.set_status(old, "superseded", by=new_rec["id"])
+    def _must(self, rid: str) -> dict:
+        rec = self.get(rid)
+        if not rec:
+            raise LookupError(f"기록이 없다: {rid}")
+        return rec
 
-    def retract(self, rid: str) -> dict:
-        return self.set_status(rid, "retracted")
+    def _evidence(self, rid: str) -> dict:
+        rec = self._must(rid)
+        if rec["status"] != "active" or rec["kind"] not in ("user_stated", "source_fact"):
+            raise ValueError(f"{rec['id']}: 근거는 살아 있는 사용자 말이나 코드가 잰 것이어야 한다 — "
+                             f"모델 추론은 사실을 덮거나 세우지 못한다")
+        return rec
+
+    def supersede(self, old_ids, new_id: str, why: str = "") -> dict:
+        """새 사용자 말(또는 코드가 잰 것)이 예전 기록을 대체한다 (gentleMonster Store.supersede 와 같은 꼴).
+        old_ids 는 id 하나나 목록. 모델 추론으로는 대체하지 않는다. 돌려주는 값은 갱신된 새 기록."""
+        new = self._evidence(new_id)
+        olds = [self._must(o) for o in ([old_ids] if isinstance(old_ids, str) else old_ids)]
+        for o in olds:
+            if o["id"] != new["id"] and o["status"] == "active":
+                self._update(o, status="superseded", superseded_by=new["id"], why=why)
+        return self._update(new, supersedes=sorted(set(new.get("supersedes") or [])
+                                                   | {o["id"] for o in olds} - {new["id"]}))
+
+    def retract(self, rid: str, by: str = "", why: str = "") -> dict:
+        """틀린 것으로 표시한다. 지우지 않는다. by 는 그렇게 판단한 근거 기록 (있으면)."""
+        rec = self._must(rid)
+        if by:
+            by = self._evidence(by)["id"]
+        if rec["status"] != "active":
+            return rec
+        return self._update(rec, status="retracted", superseded_by=by or None, why=why)
+
+    def promote(self, rid: str, evidence) -> dict:
+        """모델 추론은 모델 아닌 근거(살아 있는 사용자 말 · 코드가 잰 것)가 있을 때만 source_fact 가 된다."""
+        rec = self._must(rid)
+        if rec["kind"] != "model_inference":
+            raise ValueError(f"{rec['id']} 는 {rec['kind']} 이지 모델 추론이 아니다")
+        ok = []
+        for e in evidence or ():
+            try:
+                ok.append(self._evidence(e)["id"])
+            except (LookupError, ValueError):
+                continue
+        if not ok:
+            raise ValueError(f"{rec['id']}: 모델 아닌 근거가 없다 — 모델의 답은 스스로 검증되지 않는다")
+        return self._update(rec, kind="source_fact", evidence=ok, promoted_from="model_inference")
 
     # 조회 -----------------------------------------------------------
     def search(self, query: str, limit: int = 3, min_score: int = 3, exclude_session: str = "",
@@ -251,7 +297,7 @@ class Archive:
         """깃발 맞음 3점 · 요약 등장 1점. min_score 미만이면 '비슷한 문맥 아님' 으로 보고 버린다.
         domain 을 주면 그 도메인의 기록만 본다 (general 로 남은 기록도 뺀다 — 어느 도메인 것인지 모르는
         기억이 새 도메인에 섞이는 것이 막으려는 병이다).
-        순서: 정정(conflicts_with 가 있는 사용자 말) > 점수 > 믿음(TRUST) > 최근."""
+        순서: 정정(correction 이고 conflicts_with 가 있는 사용자 말) > 점수 > 믿음(TRUST) > 최근."""
         q = set(terms(query))
         if not q:
             return []
@@ -272,15 +318,16 @@ class Archive:
             if s >= min_score:
                 scored.append((s, r))
         scored.sort(key=lambda x: x[1]["ts"], reverse=True)            # 같으면 최근 것
-        scored.sort(key=lambda x: (-bool(x[1].get("conflicts_with")), -x[0], -TRUST[x[1]["kind"]]))
+        scored.sort(key=lambda x: (-_is_correction(x[1]), -x[0], -TRUST[x[1]["kind"]]))
         return scored[:limit]
 
     def corrected_by(self) -> dict[str, str]:
         """예전 기록 id → 그것과 겹치는 이후 정정(사용자 말) id."""
         out: dict[str, str] = {}
         for r in self.records():
-            for old in r.get("conflicts_with", []):
-                out.setdefault(old, r["id"])
+            if _is_correction(r):
+                for old in r["conflicts_with"]:
+                    out.setdefault(old, r["id"])
         return out
 
     def line(self, r: dict, corrections: dict[str, str] | None = None) -> str:
@@ -288,7 +335,7 @@ class Archive:
         notes = []
         if r["status"] != "active":
             notes.append(r["status"])
-        if r.get("conflicts_with"):
+        if _is_correction(r):
             notes.append("정정: " + ",".join(r["conflicts_with"][:3]))
         if corrections and r["id"] in corrections:
             notes.append(f"이후 정정 있음 {corrections[r['id']]}")

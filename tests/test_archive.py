@@ -175,6 +175,39 @@ class MemoryRulesTest(ArchiveBase):
         self.assertIn(old["id"], [r["id"] for _, r in self.ar.search("session ttl", min_score=1,
                                                                      include_inactive=True, limit=10)])
         self.assertTrue((self.ar.dir / old["chunk"]).is_file())      # 원문은 그대로
+        self.assertEqual(self.ar.get(old["id"])["superseded_by"], new["id"])
+        self.assertIn(old["id"], self.ar.get(new["id"])["supersedes"])
+
+    def test_record_fields_match_gentlemonster_store(self):
+        """gentleMonster memory.Store 레코드와 같은 필드 이름 · 어휘 (두 기억이 섞여도 뜻이 같게)."""
+        rec, _ = self.ar.add("벽은 나무 wall wood", "user_stated", session="s", turn=1)
+        for field in ("id", "kind", "status", "source", "sources", "supersedes", "superseded_by",
+                      "conflicts_with", "evidence", "created_at", "updated_at"):
+            self.assertIn(field, rec)
+        self.assertEqual(rec["source"]["type"], "turn")
+        self.assertEqual(archive.KINDS, ("user_stated", "source_fact", "model_inference", "summary"))
+        self.assertEqual(archive.STATUSES, ("active", "superseded", "retracted"))
+        self.assertEqual(archive.TRUST, {"user_stated": 3, "source_fact": 3, "summary": 1, "model_inference": 0})
+
+    def test_conflict_is_linked_both_ways(self):
+        old, _ = self.ar.add("벽 재료는 콘크리트 wall concrete", "user_stated")
+        new, _ = self.ar.add("벽 재료는 콘크리트 말고 나무 wall wood", "user_stated")
+        self.assertIn(new["id"], self.ar.get(old["id"])["conflicts_with"])
+        self.assertEqual(self.ar.corrected_by(), {old["id"]: new["id"]})   # 예전 기록은 정정으로 안 읽힌다
+
+    def test_promote_needs_non_model_evidence(self):
+        guess, _ = self.ar.add("만료가 원인일 것 ttl cause", "model_inference")
+        other, _ = self.ar.add("다른 추측 ttl cause maybe", "model_inference")
+        with self.assertRaises(ValueError):
+            self.ar.promote(guess["id"], [other["id"]])
+        fact, _ = self.ar.add("측정: ttl=1800 확인", "source_fact")
+        self.assertEqual(self.ar.promote(guess["id"], [fact["id"]])["kind"], "source_fact")
+
+    def test_retract_keeps_the_record(self):
+        rec, _ = self.ar.add("틀린 측정 wrong", "source_fact")
+        self.ar.retract(rec["id"], why="재측정")
+        self.assertEqual(self.ar.get(rec["id"])["status"], "retracted")
+        self.assertEqual(self.ar.get(rec["id"])["why"], "재측정")
 
     def test_summary_requires_sources(self):
         with self.assertRaises(ValueError):
@@ -296,7 +329,7 @@ class DomainTest(ArchiveBase):
     def test_corrections_stay_inside_their_domain(self):
         old, _ = self.ar.add("벽면 재료 콘크리트 concrete material", "user_stated", domain="interior")
         new, _ = self.ar.add("원단 재료 콘크리트 말고 린넨 concrete material", "user_stated", domain="fashion")
-        self.assertNotIn("conflicts_with", new)
+        self.assertEqual(new["conflicts_with"], [])
         self.assertEqual(self.ar.get(old["id"])["status"], "active")
 
     def test_hook_same_session_shift_archives_and_warns(self):

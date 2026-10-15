@@ -286,11 +286,11 @@ def cmd_recall(args) -> int:
     conf = cfg.load(root)
     ar = archive.Archive(root)
     if args.supersede:
-        row = ar.supersede(args.supersede[0], args.supersede[1])
-        print(f"{row['id']} → superseded (by {row['superseded_by']})")
+        row = ar.supersede(args.supersede[0], args.supersede[1], why=args.why or "")
+        print(f"{', '.join(row['supersedes'])} → superseded (by {row['id']})")
         return 0
     if args.retract:
-        print(f"{ar.retract(args.retract)['id']} → retracted")
+        print(f"{ar.retract(args.retract, why=args.why or '')['id']} → retracted")
         return 0
     if args.open:
         lines = None
@@ -586,6 +586,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--all", action="store_true", help="superseded · retracted 도 보기")
     s.add_argument("--supersede", nargs=2, metavar=("OLD", "NEW"), help="NEW(사용자 말·도구 출력)가 OLD 를 대체")
     s.add_argument("--retract", metavar="ID", help="틀린 것으로 표시 (지우지 않음)")
+    s.add_argument("--why", help="--supersede / --retract 의 사유")
     s.set_defaults(func=cmd_recall)
 
     s = sub.add_parser("watch", help="Claude 세션을 감시 모델(codex → agy)에게 판정받기 (Claude 토큰 0)")
