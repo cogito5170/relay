@@ -16,7 +16,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from relay.pipeline import RunnerMissing, _fill, installed_runners
+from relay.pipeline import RunnerMissing, _fill, installed_runners, quota_exhausted
 
 SPEC_FILE = "image-spec.json"
 PROMPT_FILE = "image-prompt.md"
@@ -59,8 +59,12 @@ turning it into a detailed image prompt is your job.
 4. Do not create, modify or delete any other file. Do not use the network except through the
    image tool. If you have no image generation tool, still write `{prompt_file}`, then print
    `IMAGE_TOOL_UNAVAILABLE` and stop.
-5. Finish with one line: `SAVED {image_stem}.png` or `IMAGE_TOOL_UNAVAILABLE`.
+5. Also print the final prompt to stdout between a line `{begin}` and a line `{end}`
+   (the file write can fail in some sandboxes; the caller saves it from your output).
+6. Finish with one line: `SAVED {image_stem}.png` or `IMAGE_TOOL_UNAVAILABLE`.
 """
+PROMPT_BEGIN = "=====PROMPT====="
+PROMPT_END = "=====END PROMPT====="
 
 
 def load_spec(path: Path) -> dict:
@@ -96,7 +100,19 @@ def validate_spec(spec: dict) -> dict:
 
 def build_prompt(spec: dict) -> str:
     return CODEX_PROMPT.format(spec=json.dumps(spec, ensure_ascii=False, indent=2),
-                               prompt_file=PROMPT_FILE, image_stem=IMAGE_STEM, size=spec["size"])
+                               prompt_file=PROMPT_FILE, image_stem=IMAGE_STEM, size=spec["size"],
+                               begin=PROMPT_BEGIN, end=PROMPT_END)
+
+
+def prompt_from_output(out: str) -> str:
+    """출력에서 마지막 PROMPT 블록을 꺼낸다. 마커는 한 줄 전체일 때만 인정한다 (프롬프트 되풀이 무시)."""
+    lines = [line.rstrip() for line in out.splitlines()]
+    ends = [i for i, line in enumerate(lines) if line.strip() == PROMPT_END]
+    for end in reversed(ends):
+        starts = [i for i in range(end) if lines[i].strip() == PROMPT_BEGIN]
+        if starts:
+            return "\n".join(lines[starts[-1] + 1:end]).strip()
+    return ""
 
 
 def codex_home() -> Path:
@@ -127,6 +143,7 @@ def generate(task: Path, conf: dict, log=print) -> tuple[int, dict]:
     timeout = conf["image"]["timeout"]
     report = {"task": task.name, "spec": spec, "status": "failed", "runner": "", "attempts": [],
               "image": "", "prompt_file": "", "source": ""}
+    outputs = []
     started_wall = time.time() - 1
     started = time.monotonic()
     try:
@@ -144,6 +161,7 @@ def generate(task: Path, conf: dict, log=print) -> tuple[int, dict]:
             rc, out = proc.returncode, proc.stdout + proc.stderr
         except subprocess.TimeoutExpired:
             rc, out = 124, f"timeout={timeout}"
+        outputs.append(out)
         report["attempts"].append({"argv": [a for a in template if a != "{prompt}"], "exit_code": rc,
                                    "tail": out.strip()[-800:]})
         report["runner"] = template[0]
@@ -157,10 +175,21 @@ def generate(task: Path, conf: dict, log=print) -> tuple[int, dict]:
         if image:
             report.update(status="ok", image=image.name)
             break
-        if "IMAGE_TOOL_UNAVAILABLE" in out:
+        if quota_exhausted(out):
+            # 다음 후보도 같은 ChatGPT 계정이라 다시 시도해도 같은 결과다
+            limit = next((l.strip() for l in out.splitlines() if quota_exhausted(l)), "")
+            report["error"] = f"Codex 사용 한도 소진: {limit}"
+            break
+        # codex 는 프롬프트를 출력에 되풀이하므로, 마커가 한 줄 전체일 때만 인정한다
+        if any(line.strip() == "IMAGE_TOOL_UNAVAILABLE" for line in out.splitlines()):
             report["error"] = "Codex 에 이미지 생성 도구가 없습니다 (ChatGPT 로그인·codex 버전 확인)"
             break
 
+    if not (task / PROMPT_FILE).is_file():
+        # Codex 샌드박스가 파일 쓰기를 막아도 (예: bubblewrap 실패) 출력에 남긴 프롬프트는 살린다
+        text = next(filter(None, (prompt_from_output(o) for o in reversed(outputs))), "")
+        if text:
+            (task / PROMPT_FILE).write_text(f"# Prompt\n{text}\n", encoding="utf-8")
     if (task / PROMPT_FILE).is_file():
         report["prompt_file"] = PROMPT_FILE
     if report["status"] != "ok":

@@ -10,7 +10,7 @@ Claude Code (어디서든) ── push request.json ──▶ GitHub ◀── 3
 ```
 
 VM 은 GitHub 로 나가는 연결만 쓴다. 열리는 포트가 없고, 요청 파일은 정해진 세 가지 모양만 허용하며
-셸을 거치지 않는다. 워커는 브랜치의 코드가 아니라 VM 에 **설치된** relay 를 실행한다.
+셸을 거치지 않는다. 워커(`relay inbox`)는 클론을 요청 브랜치로 체크아웃하므로, 클론 안의 코드가 아니라 VM 에 **설치된** relay 를 실행한다.
 
 ## 요청 (Claude Code 쪽)
 
@@ -46,7 +46,7 @@ git pull   # → .relay/tasks/005-*/response.json (status · exit_code · 출력
    git -C ~/relay-inbox/repo config user.name "relay inbox" && git -C ~/relay-inbox/repo config user.email "relay-inbox@localhost"
    ```
    푸시 권한은 이 저장소에만 쓰기 권한이 있는 **deploy key** 로 준다 (Settings → Deploy keys → Allow write access).
-3. 한 번 수동 실행해 확인: `python3 ~/relay-inbox/repo/scripts/relay_inbox.py --repo ~/relay-inbox/repo`
+3. 한 번 수동 실행해 확인: `relay inbox --repo ~/relay-inbox/repo` (마지막 줄에 확인한 브랜치·처리한 요청 수가 나온다)
 4. 타이머 등록:
    ```bash
    mkdir -p ~/.config/systemd/user

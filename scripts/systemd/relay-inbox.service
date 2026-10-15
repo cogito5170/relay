@@ -6,5 +6,5 @@ Description=relay inbox: run codex/agy requests that arrive through git
 Type=oneshot
 # relay 와 codex/agy 가 PATH 에 있어야 한다. 경로는 VM 에 맞게 고친다.
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/usr/bin/env python3 %h/relay-inbox/repo/scripts/relay_inbox.py --repo %h/relay-inbox/repo --relay %h/.local/bin/relay
+ExecStart=%h/.local/bin/relay inbox --repo %h/relay-inbox/repo
 TimeoutStartSec=2h

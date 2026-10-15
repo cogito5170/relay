@@ -11,8 +11,8 @@ from pathlib import Path
 
 from relay import config as cfg
 from relay import pack as packmod
-from relay import (archive, attribution, auto, cloud_job, doctor, events, hooks, imagegen, pipeline, mcp_server,
-                   router, statusline, supervisor, tasks, usage)
+from relay import (archive, attribution, auto, cloud_job, doctor, events, hooks, imagegen, inbox, pipeline,
+                   mcp_server, router, statusline, supervisor, tasks, usage)
 from relay.tokens import estimate, human
 
 BASELINE = Path.home() / ".relay" / "baseline.json"
@@ -474,7 +474,7 @@ def cmd_image(args) -> int:
 
 
 def cmd_request(args) -> int:
-    """VM 인박스 워커(scripts/relay_inbox.py)가 처리할 요청을 task 폴더에 쓴다. 커밋·푸시는 호출한 쪽이 한다."""
+    """VM 인박스 워커(relay inbox)가 처리할 요청을 task 폴더에 쓴다. 커밋·푸시는 호출한 쪽이 한다."""
     root = cfg.find_root()
     task = tasks.resolve(root, args.task)
     request = {"action": args.action, "id": time.strftime("%Y%m%dT%H%M%S")}
@@ -683,6 +683,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--agent", choices=["codex", "agy"], help="delegate 대상")
     s.add_argument("--instruction", help="delegate 지시문")
     s.set_defaults(func=cmd_request)
+
+    s = sub.add_parser("inbox", help="VM 워커: git 으로 들어온 request.json 을 codex/agy 로 처리하고 결과 푸시 (1회)")
+    inbox.add_arguments(s)
+    s.set_defaults(func=inbox.run)
 
     s = sub.add_parser("check", help="claude · codex · agy 설치/응답 진단")
     s.add_argument("--ping", action="store_true", help="각 도구에 짧은 요청 1회 (토큰 소량 사용)")

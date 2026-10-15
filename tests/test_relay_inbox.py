@@ -1,4 +1,3 @@
-import importlib.util
 import json
 import subprocess
 import sys
@@ -6,10 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "relay_inbox.py"
-spec = importlib.util.spec_from_file_location("relay_inbox", SCRIPT)
-inbox = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(inbox)
+from relay import inbox
 
 # 설치된 relay 대신 쓰는 가짜: `image <task>` 이면 task 폴더에 image.png 를 만든다.
 FAKE_RELAY = """import pathlib, sys
@@ -56,7 +52,7 @@ class InboxRoundTripTest(unittest.TestCase):
         git(base, "clone", "-q", str(self.origin), str(self.author))
         for cfg in (("user.email", "a@example.com"), ("user.name", "a")):
             git(self.author, "config", *cfg)
-        task = self.author / ".relay" / "tasks" / "005-img"
+        task = self.author / ".relay" / "tasks" / "005-한글-img"
         task.mkdir(parents=True)
         (task / "image-spec.json").write_text('{"subject": "cat"}')
         (task / "request.json").write_text(json.dumps({"action": "image"}))
@@ -78,7 +74,7 @@ class InboxRoundTripTest(unittest.TestCase):
     def test_runs_request_and_pushes_results_once(self):
         self.assertEqual(self.run_worker(), 0)
         git(self.author, "pull", "-q", "origin", "claude/x")
-        task = self.author / ".relay" / "tasks" / "005-img"
+        task = self.author / ".relay" / "tasks" / "005-한글-img"
         self.assertEqual((task / "image.png").read_bytes(), b"PNG")
         response = json.loads((task / "response.json").read_text())
         self.assertEqual(response["status"], "done")
@@ -88,7 +84,7 @@ class InboxRoundTripTest(unittest.TestCase):
         self.assertEqual(git(self.author, "rev-parse", "HEAD"), head)
 
     def test_rejected_request_is_answered_not_run(self):
-        task = self.author / ".relay" / "tasks" / "005-img"
+        task = self.author / ".relay" / "tasks" / "005-한글-img"
         (task / "request.json").write_text(json.dumps({"action": "shell", "cmd": "id"}))
         git(self.author, "commit", "-q", "-am", "bad request")
         git(self.author, "push", "-q", "origin", "claude/x")
