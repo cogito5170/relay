@@ -410,6 +410,13 @@ def cmd_check(args) -> int:
     return 0
 
 
+def cmd_read(args) -> int:
+    from relay import reader
+    root = cfg.find_root()
+    reader.serve(root, cfg.load(root), args.pdf, args.port, not args.no_open)
+    return 0
+
+
 def cmd_ask(args) -> int:
     root = cfg.find_root()
     if args.setup:
@@ -583,6 +590,12 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("check", help="claude · codex · agy 설치/응답 진단")
     s.add_argument("--ping", action="store_true", help="각 도구에 짧은 요청 1회 (토큰 소량 사용)")
     s.set_defaults(func=cmd_check)
+
+    s = sub.add_parser("read", help="PDF 교수 리더 열기")
+    s.add_argument("pdf", help="PDF 경로 또는 URL")
+    s.add_argument("--port", type=int, default=0)
+    s.add_argument("--no-open", action="store_true")
+    s.set_defaults(func=cmd_read)
 
     s = sub.add_parser("ask", help="PDF 에서 드래그한 부분 질문 (쉬운 설명은 agy/codex, 깊은 질문만 Claude)")
     s.add_argument("--text", help="선택한 텍스트 (생략 시 stdin)")

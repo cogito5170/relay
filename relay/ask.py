@@ -51,6 +51,30 @@ EXPLAIN_PROMPT = """학습자가 PDF 교안/논문에서 아래 부분을 드래
 """
 
 
+MODE_PROMPTS = {
+    "explain": "한 줄 요약 → 직관/비유 → 정확한 의미 → 필요시 수식과 기호 표 → 필요시 mermaid 그림 1개 → 확인 질문 1개.",
+    "research": '이 개념이 나온 맥락과 대표 연구 흐름 2~4개를 "분야/방법/핵심 아이디어"로 설명. 논문 제목·저자·연도는 확실할 때만 쓰고 아니면 "확인 필요"로 표시. DOI·링크를 지어내지 않는다. 각 항목 끝에 검색어: 검색할 문구 형식의 독립된 줄을 반드시 쓴다.',
+    "learn": "선수 지식 1~3개, 다음에 공부할 것 1~3개, 흔한 오해 1개를 설명.",
+    "deep": "깊게 설명하고 유도·증명은 단계별로. 한 줄 요약, 직관, 정확한 의미, 필요한 수식과 기호 표, 확인 질문 1개를 포함.",
+}
+
+
+def professor_prompt(mode: str, **values) -> str:
+    if mode not in MODE_PROMPTS:
+        raise ValueError("알 수 없는 교수 모드")
+    # Research/learning have their own structure rather than the default outline.
+    return EXPLAIN_PROMPT.split("# 답변 형식")[0].format(**values) + "# 답변 형식\n" + MODE_PROMPTS[mode]
+
+
+def search_links(markdown: str) -> list[dict]:
+    """Build search URLs locally; never treat generated URLs as citations."""
+    queries = re.findall(r"(?m)^\s*(?:[-*]\s*)?(?:\*\*)?검색어(?:\*\*)?\s*[:：]\s*(.+)$", markdown)
+    return [{"query": q.strip(),
+             "google_scholar": "https://scholar.google.com/scholar?q=" + urllib.parse.quote(q.strip()),
+             "semantic_scholar": "https://www.semanticscholar.org/search?q=" + urllib.parse.quote(q.strip())}
+            for q in dict.fromkeys(queries) if q.strip()]
+
+
 # ---------------------------------------------------------------- 맥락 (로컬, 토큰 0)
 
 def resolve_source(source: str) -> Path | None:
@@ -138,10 +162,16 @@ def answer(conf: dict, prompt: str, deep: bool, cwd: Path) -> tuple[str, str, di
     values = {"no_shell": NO_SHELL_NOTE, "system_prompt": SYSTEM_PROMPT, "model": a["model"]}
     failures = []
     for template in candidates:
-        if not template or not shutil.which(template[0]):
+        if not template:
+            continue
+        if not shutil.which(template[0]):
+            failures.append(f"{template[0]}: not installed")
             continue
         try:
             rc, text, usage = _run(template, prompt, values, cwd, a["timeout"])
+        except OSError as exc:
+            failures.append(f"{template[0]}: {exc}")
+            continue
         except subprocess.TimeoutExpired:
             failures.append(f"{template[0]}: timeout")
             continue
@@ -198,28 +228,36 @@ if (window.mermaid) {{ mermaid.initialize({{ startOnLoad: false }}); mermaid.run
 
 
 def ask(root: Path, conf: dict, selection: str, question: str, source: str = "", deep: bool = False,
-        open_page: bool = False) -> dict:
+        open_page: bool = False, mode: str | None = None, page: int | None = None,
+        pages: list[str] | None = None) -> dict:
     selection = selection.strip()
     if not selection:
         raise ValueError("선택한 텍스트가 없습니다")
     question = question.strip() or "쉽게 설명해줘"
     pdf = resolve_source(source)
-    pages = pdf_pages(pdf) if pdf else []
-    page = locate(pages, selection) if pages else None
-    context = context_window(pages, page, selection, conf["ask"]["context_chars"]) if page else "(맥락 없음 — 선택 부분만)"
+    pages = pages if pages is not None else (pdf_pages(pdf) if pdf else [])
+    if page is None:
+        page = locate(pages, selection) if pages else None
+    elif type(page) is not int or page < 1:
+        raise ValueError("쪽 번호는 양의 정수여야 합니다")
+    context = context_window(pages, page, selection, conf["ask"]["context_chars"]) if page and page <= len(pages) else "(맥락 없음 — 선택 부분만)"
     where = f"{pdf.name} p.{page}" if pdf and page else (pdf.name if pdf else "출처 미상")
-    deep = deep or wants_deep(question, selection)
+    deep = (mode == "deep") if mode else (deep or wants_deep(question, selection))
 
     started = time.monotonic()
-    prompt = EXPLAIN_PROMPT.format(question=question, selection=selection, where=where, context=context)
+    values = dict(question=question, selection=selection, where=where, context=context)
+    prompt = professor_prompt(mode, **values) if mode else EXPLAIN_PROMPT.format(**values)
     text, runner, usage, failures = answer(conf, prompt, deep, root)
+    links = (search_links(text) or search_links("검색어: " + _norm(selection)[:200])) if mode == "research" else []
+    for link in links:
+        text += f"\n\n검색: [{link['query']} — Google Scholar]({link['google_scholar']}) · [Semantic Scholar]({link['semantic_scholar']})"
 
     doc_dir = root / conf["ask"]["notes"] / slug(pdf.stem if pdf else "selection")
     (doc_dir / "answers").mkdir(parents=True, exist_ok=True)
     stamp = datetime.now()
     meta = {"doc": pdf.name if pdf else "선택 텍스트", "where": where, "runner": runner,
             "time": stamp.strftime("%Y-%m-%d %H:%M"), "question": question, "selection": selection}
-    page_file = doc_dir / "answers" / f"{stamp:%Y%m%d-%H%M%S}.html"
+    page_file = doc_dir / "answers" / f"{stamp:%Y%m%d-%H%M%S-%f}.html"
     page_file.write_text(render_html(meta, text), encoding="utf-8")
     with (doc_dir / "qa.md").open("a", encoding="utf-8") as f:
         quoted = "\n".join("> " + line for line in selection.splitlines())
@@ -230,7 +268,7 @@ def ask(root: Path, conf: dict, selection: str, question: str, source: str = "",
     if open_page:
         webbrowser.open(page_file.as_uri())
     return {"runner": runner, "deep": deep, "page": page, "html": page_file, "notes": doc_dir / "qa.md",
-            "usage": usage, "failures": failures}
+            "usage": usage, "failures": failures, "markdown": text, "links": links}
 
 
 # ---------------------------------------------------------------- macOS 빠른 동작 설치
