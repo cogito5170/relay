@@ -11,7 +11,7 @@
    | base | `relay doctor` → MCP 서버 끄기, CLAUDE.md 줄이기 (효과가 가장 큼: 매 요청에 적용) |
    | thinking | 루틴 작업은 effort/thinking 을 낮추고, 어려운 판단에만 높이기 |
    | Write/Edit input | 큰 문서·반복 코드는 Codex/Antigravity 가 쓰고 Claude 는 diff 리뷰만 (`write_guard` 켜기) |
-   | Bash / Read output | `relay init --hooks` (bash_guard · read_guard). 넓은 범위 읽기(`read_max_range`, 기본 120줄)도 함께 막힌다 |
+   | Bash / Read output | `relay init --hooks` (bash_guard · read_guard). 넓은 범위 읽기(`read_max_range`, 기본 120줄: Read limit/offset · sed · head/tail · awk NR)와 넓은 맥락 grep(`grep_max_context`, 기본 20줄)도 함께 막힌다 |
    | 세션이 길다 (req 많음) | hooks 의 prompt_gate 가 한도에서 메시지를 막고 /handoff 를 안내 |
    | overhead (포맷·주입) | 더 쪼갤 수 없는 몫 (블록 포맷 · 세션 중 주입되는 system-reminder · 추정 오차). 줄이려면 요청 수 자체를 줄인다 |
 

@@ -32,11 +32,22 @@ LIMITERS = re.compile(r"\||>|\s-q\b|--quiet|--silent|\s-n\s*\d|--max-count|--tai
                       r"--name-only|--name-status|\s-\d+\b|--oneline\s+-\d")
 
 # 범위를 지정해 읽는 명령. 범위가 read_max_range 를 넘으면 "줄 범위로 읽었다"고 보지 않는다.
+_SPAN = lambda m: int(m.group(2)) - int(m.group(1)) + 1
 RANGES = (
-    (re.compile(r"\bsed\b[^|;&]*?-n\s*['\"]?(\d+)\s*,\s*(\d+)\s*p"),
-     lambda m: int(m.group(2)) - int(m.group(1)) + 1),
+    (re.compile(r"\bsed\b[^|;&]*?-n\s*['\"]?(\d+)\s*,\s*(\d+)\s*p"), _SPAN),
     (re.compile(r"\b(?:head|tail)\b\s+(?:-n\s*|-)(\d+)\b"), lambda m: int(m.group(1))),
+    # awk 'NR>=A && NR<=B' · 'NR>A && NR<B' (순서 반대도 받는다)
+    (re.compile(r"\bawk\b[^|;&]*?NR\s*>=?\s*(\d+)\s*&&\s*NR\s*<=?\s*(\d+)"), _SPAN),
+    (re.compile(r"\bawk\b[^|;&]*?NR\s*<=?\s*(\d+)\s*&&\s*NR\s*>=?\s*(\d+)"),
+     lambda m: int(m.group(1)) - int(m.group(2)) + 1),
+    # awk 'NR==A,NR==B'
+    (re.compile(r"\bawk\b[^|;&]*?NR\s*==\s*(\d+)\s*,\s*NR\s*==\s*(\d+)"), _SPAN),
 )
+# grep 의 맥락 줄: 일치마다 N 줄이 더 붙으므로 N 이 크면 출력이 몇 배로 늘어난다.
+GREP_CONTEXT = re.compile(
+    r"\b(?:e?grep|rg|git\s+grep)\b[^|;&]*?"
+    r"(?:-[ABC]\s*(\d+)|--(?:after-|before-)?context[=\s](\d+))")
+MATCH_CAP = re.compile(r"\s(?:-m\s*\d|--max-count)")
 TOKENS_PER_LINE = 12   # 범위만 보고 거부할 때의 거친 환산 (events 의 avoided 용)
 NARROW_READ_ADVICE = "Grep 으로 위치를 찾고 {limit}줄 이하로 좁혀서 읽으세요."
 
@@ -157,13 +168,23 @@ def read_guard(tool_input: dict, conf: dict, cwd: Path) -> tuple[str, int] | Non
         return (f"relay: 한 번에 {limit}줄은 너무 넓습니다 (한도 {max_range}줄). 읽은 줄은 이 세션의 이후 "
                 f"모든 요청이 다시 읽습니다. " + NARROW_READ_ADVICE.format(limit=max_range)), \
                (limit - max_range) * TOKENS_PER_LINE
-    if tool_input.get("offset") or limit:
+    if limit:
         return None
     path = Path(tool_input.get("file_path") or "")
     path = path if path.is_absolute() else cwd / path
     if path.suffix.lower() in BINARY_SUFFIXES or not path.is_file():
         return None
     lines, tokens = _file_stats(path)
+    offset = tool_input.get("offset") or 0
+    if offset:
+        # limit 없는 offset 은 그 줄부터 파일 끝까지(최대 2000줄) 읽는다. offset 이 있다는 것만으로
+        # '좁혀 읽었다'고 보면 한도가 무의미해진다.
+        rest = max(lines - offset + 1, 0)
+        if not max_range or rest <= max_range:
+            return None
+        return (f"relay: offset {offset} 부터 끝까지는 {rest}줄입니다 (한도 {max_range}줄). 읽은 줄은 이 세션의 "
+                f"이후 모든 요청이 다시 읽습니다. limit 을 함께 주어 {max_range}줄 이하로 좁히세요."), \
+               (rest - max_range) * TOKENS_PER_LINE
     if lines <= conf["hooks"]["read_max_lines"]:
         return None
     return (f"relay: {path.name} 은 {lines}줄(~{human(tokens)} tok). 전체를 읽으면 이 세션의 이후 모든 요청이 "
@@ -188,6 +209,24 @@ def range_guard(command: str, conf: dict) -> tuple[str, int] | None:
     return None
 
 
+def grep_guard(command: str, conf: dict) -> tuple[str, int] | None:
+    """`grep -A/-B/-C N` 의 맥락 줄이 한도를 넘으면 거부한다.
+
+    일치 수를 모르니 줄 수로는 못 센다. 맥락이 넓으면 일치 하나가 N 배로 불어나므로 N 자체를 본다.
+    `-m` · `--max-count` 로 일치 수를 제한했으면 통과시킨다.
+    """
+    limit = conf["hooks"]["grep_max_context"]
+    if not limit or MATCH_CAP.search(command):
+        return None
+    for m in GREP_CONTEXT.finditer(command):
+        n = int(m.group(1) or m.group(2))
+        if n > limit:
+            return (f"relay: `{m.group(0)[:40]}` 는 일치마다 맥락 {n}줄을 붙입니다 (한도 {limit}줄). 일치가 "
+                    f"여러 개면 출력이 그만큼 불어납니다. 맥락을 좁히거나 `-m N` 으로 일치 수를 제한하세요."), \
+                   (n - limit) * TOKENS_PER_LINE
+    return None
+
+
 def bash_guard(tool_input: dict, conf: dict, cwd: Path) -> tuple[str, int] | None:
     command = (tool_input.get("command") or "").strip()
     if not command:
@@ -197,6 +236,9 @@ def bash_guard(tool_input: dict, conf: dict, cwd: Path) -> tuple[str, int] | Non
         return wide
     if LIMITERS.search(command):
         return None
+    narrow = grep_guard(command, conf)
+    if narrow:
+        return narrow
     for segment in re.split(r"&&|;|\|\|", command):
         seg = segment.strip()
         m = re.match(r"(?:cat|less|more)\s+([^\s|;&]+)\s*$", seg)

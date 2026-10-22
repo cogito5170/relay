@@ -97,11 +97,45 @@ class HooksTest(unittest.TestCase):
                    "tail -20 big.py", "pytest 2>&1 | tail -n 60", "git log --oneline -500"):
             self.assertIsNone(self.pretool("Bash", command=ok), ok)
 
+    def test_read_guard_rejects_offset_without_limit(self):
+        """limit 없는 offset 은 파일 끝까지 읽는다. offset 이 있다는 것만으로 통과시키면 안 된다."""
+        limit = config.DEFAULTS["hooks"]["read_max_range"]
+        denied = self.pretool("Read", file_path="big.py", offset=100)
+        reason = denied["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertIn("902줄", reason)   # _file_stats 는 끝 줄바꿈을 한 줄로 세어 보수적으로 잡는다
+        self.assertIn("limit", reason)
+        self.assertIsNone(self.pretool("Read", file_path="big.py", offset=1002 - limit))
+        self.assertIsNone(self.pretool("Read", file_path="big.py", offset=100, limit=50))
+
+    def test_bash_guard_rejects_wide_awk_ranges(self):
+        limit = config.DEFAULTS["hooks"]["read_max_range"]
+        for wide in (f"awk 'NR>=1 && NR<={limit + 2}' big.py", f"awk 'NR<={limit + 2} && NR>=1' big.py",
+                     f"awk 'NR==10,NR=={10 + limit}' big.py", f"awk 'NR>100&&NR<{limit + 102}' big.py"):
+            denied = self.pretool("Bash", command=wide)
+            self.assertIsNotNone(denied, wide)
+            self.assertIn("Grep", denied["hookSpecificOutput"]["permissionDecisionReason"])
+        for ok in (f"awk 'NR>=1 && NR<={limit}' big.py", "awk 'NR==10,NR==40' big.py",
+                   "awk '{print $1}' big.py | head -n 20"):
+            self.assertIsNone(self.pretool("Bash", command=ok), ok)
+
+    def test_bash_guard_rejects_wide_grep_context(self):
+        limit = config.DEFAULTS["hooks"]["grep_max_context"]
+        for wide in (f"grep -C {limit + 1} foo big.py", f"grep -A{limit + 30} foo big.py",
+                     f"rg -B {limit + 1} foo", f"grep --context={limit + 1} foo big.py"):
+            denied = self.pretool("Bash", command=wide)
+            self.assertIsNotNone(denied, wide)
+            self.assertIn("-m N", denied["hookSpecificOutput"]["permissionDecisionReason"])
+        for ok in (f"grep -C {limit} foo big.py", "grep -A 3 foo big.py", "rg -C 5 foo",
+                   f"grep -m 2 -C {limit + 50} foo big.py", f"grep -C {limit + 50} foo big.py | head -n 30"):
+            self.assertIsNone(self.pretool("Bash", command=ok), ok)
+
     def test_read_max_range_can_be_disabled(self):
         (self.dir / ".relay" / "config.toml").write_text(
             '[hooks]\nenabled = ["read_guard", "bash_guard"]\nread_max_range = 0\n')
         self.assertIsNone(self.pretool("Read", file_path="big.py", offset=1, limit=900))
+        self.assertIsNone(self.pretool("Read", file_path="big.py", offset=1))
         self.assertIsNone(self.pretool("Bash", command="sed -n '1,900p' big.py"))
+        self.assertIsNone(self.pretool("Bash", command="awk 'NR>=1 && NR<=900' big.py"))
 
     def test_write_guard_on_by_default_for_pro(self):
         content = "y" * 40_000

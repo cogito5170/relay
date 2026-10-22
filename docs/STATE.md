@@ -67,6 +67,7 @@
 5. pack 이 예산 초과로 **버린 새 파일을 리뷰어가 못 보는** 문제: 최소한 "버린 파일 목록" 을 리뷰 입력에 남길지 결정.
 6. `relay run` 을 agy explore 로 한 번 끝까지 돌려 `explore.md` 품질 확인.
 7. `relay lean` 상시 사용, hooks 를 Sonnet/Opus 세션에서 확인.
-8. 남은 가드 구멍: `Read(offset만, limit 없음)` · `awk 'NR>=A&&NR<=B'` · `grep -A/-B/-C N` 은 아직 통과한다. hooks 는 `effiency/.claude/settings.local.json` 에만 있어 `/Users/cogito` 에서 시작한 세션에는 적용되지 않는다 (전역 `~/.claude/settings.json` 설치 검토).
+8. (해결) 남은 가드 구멍 세 개를 막았다 (2026-10-22). `Read(offset만, limit 없음)` 은 그 줄부터 파일 끝까지 읽으므로 남은 줄 수를 `read_max_range` 와 비교해 거부한다. `awk 'NR>=A&&NR<=B'` (순서 반대·`NR>A&&NR<B`·`NR==A,NR==B` 포함) 를 `RANGES` 에 넣었다. `grep -A/-B/-C N` 은 일치 수를 모르니 줄로 못 세어, 맥락 N 자체를 새 설정 `hooks.grep_max_context`(기본 20) 와 비교한다 — `-m`·`--max-count` 로 일치를 묶었거나 `| head` 처럼 출력을 줄였으면 통과시킨다. 테스트 120개 통과, 세 경로 모두 실제 세션에서 deny 확인. hooks 전역 설치는 9항에서 해결됐다.
 9. (해결) `~/.claude/settings.json` 의 `PreToolUse` matcher 를 `"*"` 로 올렸다 (2026-10-22, `hooks.install` 로 병합, 백업 `settings.json.bak-20261022-matcher`). 전에는 `Read|Bash|Write` 라 Edit·Grep 이 가드와 마무리 차단을 통과했다 (실제로 Edit 로 우회한 적 있음). 호출당 비용은 실측 70~90ms.
 10. (해결) `session_start`·`wrapup_target`·`handoff_hint` 를 모두 `_marked_task` 기준으로 바꿨다 (2026-10-22). 표시 없는 effiency 에서 `/clear` 는 `pdf-professor` 대신 `.relay/HANDOFF-NEXT.md` 를 읽고, 그 파일이 없으면 주입하지 않는다. 새 task 로 작업할 때는 `relay task new` 가 `.relay/current` 를 쓴다 (`relay auto` 도 쓴다). 옛 task 로 돌아갈 때는 그 파일에 task 이름을 직접 적거나 `RELAY_TASK` 를 쓴다 — 표시를 바꾸는 명령은 없다.
+11. 아직 남은 읽기 구멍: 상한 없는 `awk 'NR>=A'` · `sed -n 'A,$p'` 처럼 **끝까지 읽는 셸 범위**는 통과한다. 명령만 보고는 파일 길이를 알 수 없어 줄 수를 못 센다 (Read 는 파일을 stat 할 수 있어서 막았다). 막으려면 가드가 명령의 대상 파일을 파싱해 stat 해야 하는데, 파이프·glob 까지 생각하면 오판이 늘어 지금은 두었다.

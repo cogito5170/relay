@@ -24,7 +24,8 @@ DEFAULTS = {
         "wrapup_context": 0,
         "session_inject": ["startup", "clear", "compact"],  # 이때 brief/state 자동 주입
         "read_max_lines": 400,     # 이보다 긴 파일은 offset/limit 없이 Read 금지
-        "read_max_range": 120,     # 한 번에 읽을 수 있는 최대 줄 수 (Read limit, sed -n 'A,Bp', head/tail -n N)
+        "read_max_range": 120,     # 한 번에 읽을 수 있는 최대 줄 수 (Read limit/offset, sed -n 'A,Bp', head/tail -n N, awk NR 범위)
+        "grep_max_context": 20,    # grep -A/-B/-C 의 최대 맥락 줄 수 (일치마다 붙으므로 작게 둔다)
         "write_max_tokens": 6_000, # write_guard 를 켰을 때 한 번에 쓸 수 있는 최대 토큰
         "noisy_commands": ["pytest", "npm test", "npm run test", "yarn test", "pnpm test", "cargo test",
                            "go test", "mvn ", "gradle", "git log", "docker logs", "kubectl logs",

@@ -86,7 +86,8 @@ warn_requests = 30
 enabled = ["prompt_gate", "read_guard", "bash_guard", "write_guard"]
 gate_context = 60000
 gate_requests = 50
-read_max_range = 120   # 한 번에 읽을 최대 줄 수 (Read limit · sed -n 'A,Bp' · head/tail -n N)
+read_max_range = 120   # 한 번에 읽을 최대 줄 수 (Read limit/offset · sed -n 'A,Bp' · head/tail -n N · awk NR 범위)
+grep_max_context = 20  # grep -A/-B/-C 의 최대 맥락 줄 수 (일치마다 붙어 몇 배로 불어난다)
 
 [pipeline]
 verify = "python -m pytest -q"   # 프로젝트에 맞게
