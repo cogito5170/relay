@@ -68,5 +68,5 @@
 6. `relay run` 을 agy explore 로 한 번 끝까지 돌려 `explore.md` 품질 확인.
 7. `relay lean` 상시 사용, hooks 를 Sonnet/Opus 세션에서 확인.
 8. 남은 가드 구멍: `Read(offset만, limit 없음)` · `awk 'NR>=A&&NR<=B'` · `grep -A/-B/-C N` 은 아직 통과한다. hooks 는 `effiency/.claude/settings.local.json` 에만 있어 `/Users/cogito` 에서 시작한 세션에는 적용되지 않는다 (전역 `~/.claude/settings.json` 설치 검토).
-9. `PreToolUse` matcher 를 `"*"` 로 올릴지 결정. `SessionStart` 는 등록됐지만 matcher 는 아직 `Read|Bash|Write` 라 Edit·Grep 이 가드를 통과한다 (실제로 마무리 차단을 Edit 로 우회한 적 있음).
+9. (해결) `~/.claude/settings.json` 의 `PreToolUse` matcher 를 `"*"` 로 올렸다 (2026-10-22, `hooks.install` 로 병합, 백업 `settings.json.bak-20261022-matcher`). 전에는 `Read|Bash|Write` 라 Edit·Grep 이 가드와 마무리 차단을 통과했다 (실제로 Edit 로 우회한 적 있음). 호출당 비용은 실측 70~90ms.
 10. (해결) `session_start`·`wrapup_target`·`handoff_hint` 를 모두 `_marked_task` 기준으로 바꿨다 (2026-10-22). 표시 없는 effiency 에서 `/clear` 는 `pdf-professor` 대신 `.relay/HANDOFF-NEXT.md` 를 읽고, 그 파일이 없으면 주입하지 않는다. 새 task 로 작업할 때는 `relay task new` 가 `.relay/current` 를 쓴다 (`relay auto` 도 쓴다). 옛 task 로 돌아갈 때는 그 파일에 task 이름을 직접 적거나 `RELAY_TASK` 를 쓴다 — 표시를 바꾸는 명령은 없다.

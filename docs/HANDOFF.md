@@ -101,7 +101,7 @@ review_effort = "medium"
 3. hooks 를 Sonnet / Opus 세션에서도 확인 (Haiku 에서만 확인했다).
 4. ~~`relay why` 의 미분류 분석~~ **완료 (2026-10-13).** thinking 과 포맷·주입 overhead 로 나눠 표시한다 (위 측정값 참고).
 5. 리뷰 턴 수 줄이기 실험: 실제 리뷰가 3턴(파일 열기 포함)이면 가중 약 15.6k 다. 턴당 재과금은 이제 리뷰 system prompt 에 들어가 있고 턴 상한은 `pipeline.review_max_turns` (기본 8) · `relay run --review-max-turns 4` 로 조절한다. **남은 일은 4 턴에서 VERDICT 품질이 유지되는지 실제 작업으로 확인하는 것.**
-6. `~/.claude/settings.json` 의 `PreToolUse` matcher 가 `Read|Bash|Write` 라 Edit·Grep 은 가드를 통과한다 — `"*"` 로 올릴지 결정. (`SessionStart` 는 2026-10-22 등록 완료: `/clear` 시 `.relay/HANDOFF-NEXT.md` 자동 주입.)
+6. ~~`PreToolUse` matcher 가 `Read|Bash|Write` 라 Edit·Grep 이 가드를 통과~~ **해결 (2026-10-22).** `~/.claude/settings.json` 에 `SessionStart` 등록 + matcher `"*"` (백업 `settings.json.bak-20261022-matcher`). 호출당 70~90ms.
 7. ~~Gemini explore 의 503 빈도~~ **해결 (2026-10-13).** Gemini API 를 쓰지 않기로 해서 explore 1순위는 `agy --mode plan --print` 이고, 실패하면 `codex exec --sandbox read-only` 로 넘어간다.
 
 ## 로컬 환경 메모 (이 맥)
