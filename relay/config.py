@@ -19,6 +19,9 @@ DEFAULTS = {
         "enabled": ["prompt_gate", "read_guard", "bash_guard", "write_guard"],  # Claude Pro 기준
         "gate_context": 100_000,  # 최후 방어선. 보통은 lean.compact_window 에서 자동 압축이 먼저 일어난다
         "gate_requests": 100,     # 최후 방어선
+        # 대화형 세션에서 PreToolUse hook 이 상태 파일 마무리를 강제할 컨텍스트.
+        # 0 = gate_context 의 85% (숫자 차단 직전), 음수 = 끈다.
+        "wrapup_context": 0,
         "session_inject": ["startup", "clear", "compact"],  # 이때 brief/state 자동 주입
         "read_max_lines": 400,     # 이보다 긴 파일은 offset/limit 없이 Read 금지
         "read_max_range": 120,     # 한 번에 읽을 수 있는 최대 줄 수 (Read limit, sed -n 'A,Bp', head/tail -n N)

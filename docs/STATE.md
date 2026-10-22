@@ -50,6 +50,14 @@
     - hook 은 캐시된 판정만 읽어 0 토큰. `CLEAR` 는 차단(`[force]` 로 통과), `DELEGATE`·`HANDOFF` 는 안내 한 줄. 캐시가 낡고 컨텍스트가 40k 를 넘으면 갱신을 백그라운드로 띄우고 메시지는 통과시킨다.
     - 상태줄에 `감시자 <판정>` 표시. 설정은 `[supervisor]` (enabled, soft_context, max_age, timeout, runners, fallback_model).
 
+11. **차단될 때 넘길 프롬프트가 없던 문제를 고쳤다** (hook 이 걸리면 `prompt_gate` 는 메시지를 모델에 보내지 않으므로, 그 시점에 상태가 안 남아 있으면 다음 세션이 이어받을 것이 없었다).
+    - `/handoff` · `/pickup` 이 `effiency/.claude/commands/` 에만 있어 홈 디렉터리 세션에서는 존재하지 않았다. `~/.claude/commands/` 에 복사했고, 두 명령이 task 폴더가 없으면 `.relay/HANDOFF-NEXT.md` 로 떨어지도록 고쳤다.
+    - `auto_wrapup` 을 `relay auto` 전용에서 대화형 세션까지 확장했다. 숫자 차단 직전(`hooks.wrapup_context`, 0 이면 `gate_context` 의 85%)에서 상태 파일 쓰기 외 모든 도구를 막아 인수인계를 받아낸다. 음수면 끈다.
+    - 대화형 마무리는 `.relay/current` 나 `RELAY_TASK` 로 **지금 이 작업이라고 표시된** task 만 건드린다. `auto.current_task` 의 "가장 최근 task" 폴백을 그대로 쓰면 관계없는 옛 task 의 `state.md` 를 덮어쓴다 (실제로 이 세션에서 `003-platform-devops-final-16week-plan` 을 지목했다). 표시가 없으면 `.relay/HANDOFF-NEXT.md` 로 쓴다.
+    - 차단 메시지(`prompt_gate` · 감시자 `CLEAR`)에 상태 형식과 쓸 파일 경로를 직접 넣었다. 전에는 `/handoff <id>` 만 안내해, task 가 없는 세션에서는 실행 불가능한 안내였다.
+    - `session_start` 는 마무리가 쓰는 곳과 같은 기준(`_marked_task`)으로 읽는다: 표시된 task 의 `brief.md`+`state.md`, 표시가 없으면 `.relay/HANDOFF-NEXT.md`, 그 파일도 없으면 아무것도 주입하지 않는다 (2026-10-22 변경 — 전에는 `auto.current_task` 를 써서 표시 없는 저장소에 '가장 최근 task' 가 들어왔다). 2026-10-22 에 `~/.claude/settings.json` 에 `SessionStart`(`relay hook session`) 를 등록해, 홈 세션도 `/clear` · 새 세션 · 압축 직후 이 파일을 자동으로 받는다 (`/pickup` 불필요). `source=resume` 은 `session_inject` 에 없어 주입하지 않는다.
+    - 첫 임계값을 `budget.max_context`(effiency 60k) 로 뒀더니 작업 중인 세션의 Bash·Read 를 61.4k 에서 바로 막았다. `budget.max_context` 는 상태줄 경고용이라 대화형 세션이 정상적으로 넘기는 값이어서 기준으로 쓸 수 없다. 테스트 116개 통과.
+
 ## 다음 단계
 
 1. 감시자를 실사용해 보고 판정 품질 확인. codex 가 CONTINUE 를 너무 자주 주면 프롬프트에 임계 수치를 명시한다.
@@ -60,3 +68,5 @@
 6. `relay run` 을 agy explore 로 한 번 끝까지 돌려 `explore.md` 품질 확인.
 7. `relay lean` 상시 사용, hooks 를 Sonnet/Opus 세션에서 확인.
 8. 남은 가드 구멍: `Read(offset만, limit 없음)` · `awk 'NR>=A&&NR<=B'` · `grep -A/-B/-C N` 은 아직 통과한다. hooks 는 `effiency/.claude/settings.local.json` 에만 있어 `/Users/cogito` 에서 시작한 세션에는 적용되지 않는다 (전역 `~/.claude/settings.json` 설치 검토).
+9. `PreToolUse` matcher 를 `"*"` 로 올릴지 결정. `SessionStart` 는 등록됐지만 matcher 는 아직 `Read|Bash|Write` 라 Edit·Grep 이 가드를 통과한다 (실제로 마무리 차단을 Edit 로 우회한 적 있음).
+10. (해결) `session_start`·`wrapup_target`·`handoff_hint` 를 모두 `_marked_task` 기준으로 바꿨다 (2026-10-22). 표시 없는 effiency 에서 `/clear` 는 `pdf-professor` 대신 `.relay/HANDOFF-NEXT.md` 를 읽고, 그 파일이 없으면 주입하지 않는다. 새 task 로 작업할 때는 `relay task new` 가 `.relay/current` 를 쓴다 (`relay auto` 도 쓴다). 옛 task 로 돌아갈 때는 그 파일에 task 이름을 직접 적거나 `RELAY_TASK` 를 쓴다 — 표시를 바꾸는 명령은 없다.

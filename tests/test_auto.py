@@ -113,12 +113,23 @@ class AutoHooksTest(unittest.TestCase):
         return json.loads(out.getvalue()) if out.getvalue() else None
 
     def test_session_start_injects_state(self):
+        """표시된 task 만 주입한다 — 마무리가 쓰는 곳(_marked_task)과 읽는 곳이 같아야 한다."""
+        self.assertIsNone(self.hook("session", {"source": "clear"}))   # 표시가 없고 넘길 파일도 없다
+        (self.root / ".relay" / "current").write_text(self.task.name)
         r = self.hook("session", {"source": "clear"})
         ctx = r["hookSpecificOutput"]["additionalContext"]
         self.assertEqual(r["hookSpecificOutput"]["hookEventName"], "SessionStart")
         self.assertIn("wire the API", ctx)
         self.assertIn(self.task.name, ctx)
         self.assertIsNone(self.hook("session", {"source": "resume"}))
+
+    def test_session_start_prefers_fallback_over_latest_task(self):
+        """표시가 없으면 '가장 최근 task' 가 아니라 마무리가 쓴 HANDOFF-NEXT.md 를 읽는다."""
+        hooks.handoff_fallback(self.root).write_text("STATUS: CONTINUE\n## Next\nship the gate")
+        ctx = self.hook("session", {"source": "clear"})["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("ship the gate", ctx)
+        self.assertNotIn("wire the API", ctx)
+        self.assertNotIn(self.task.name, ctx)
 
     def test_auto_wrapup_only_in_auto_mode(self):
         env = {"RELAY_AUTO": "1", "RELAY_TASK": self.task.name, "RELAY_HANDOFF_CONTEXT": "1000"}
@@ -129,6 +140,48 @@ class AutoHooksTest(unittest.TestCase):
             ok = self.hook("pretool", {"tool_name": "Write", "tool_input": {
                 "file_path": str(self.task / "state.md"), "content": "STATUS: DONE"}})
             self.assertIsNone(ok)
+
+    def test_interactive_wrapup_blocks_until_state_written(self):
+        """숫자 차단(prompt_gate)은 메시지를 모델에 보내지 않으므로, 그 전에 상태를 받아 둬야 한다."""
+        big = self.root / "big.jsonl"
+        big.write_text(json.dumps({"type": "assistant", "requestId": "r", "message": {"id": "m", "usage": {
+            "input_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 90_000}}}) + "\n")
+        call = {"transcript_path": str(big), "tool_name": "Grep", "tool_input": {"pattern": "x"}}
+        self.assertIsNone(self.hook("pretool", {**call, "transcript_path": str(self.transcript)}))
+        fallback = hooks.handoff_fallback(self.root)
+        denied = self.hook("pretool", call)["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertIn(str(fallback), denied)          # 표시가 없으면 옛 task 의 state.md 를 건드리지 않는다
+        self.assertIn("/clear", denied)
+        self.assertIsNone(self.hook("pretool", {**call, "tool_name": "Write", "tool_input": {
+            "file_path": str(fallback), "content": "STATUS: CONTINUE"}}))
+        marker = self.root / ".relay" / "current"
+        marker.write_text(self.task.name)
+        denied = self.hook("pretool", call)["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertIn(str(self.task / "state.md"), denied)
+        marker.unlink()
+        (self.root / ".relay" / "config.toml").write_text("[hooks]\nwrapup_context = -1\n")
+        self.assertIsNone(self.hook("pretool", call))   # 음수면 끈다
+
+    def test_handoff_hint_without_task(self):
+        root = Path(self._tmp.name).resolve() / "bare"
+        (root / ".relay").mkdir(parents=True)
+        hint = hooks.handoff_hint(root)
+        self.assertIn(hooks.HANDOFF_FALLBACK, hint)
+        self.assertIn("/pickup", hint)
+
+    def test_session_start_injects_fallback_without_task(self):
+        root = Path(self._tmp.name).resolve() / "bare2"
+        (root / ".relay").mkdir(parents=True)
+        out = io.StringIO()
+        data = {"cwd": str(root), "transcript_path": str(self.transcript), "source": "clear"}
+        hooks.main("session", io.StringIO(json.dumps(data)), out)
+        self.assertEqual(out.getvalue(), "")          # 넘길 파일이 없으면 아무것도 주입하지 않는다
+        hooks.handoff_fallback(root).write_text("STATUS: CONTINUE\n## Next\nship the gate")
+        out = io.StringIO()
+        hooks.main("session", io.StringIO(json.dumps(data)), out)
+        ctx = json.loads(out.getvalue())["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("ship the gate", ctx)
+        self.assertIn(hooks.HANDOFF_FALLBACK, ctx)
 
     def test_install_adds_session_hook_and_updates_matcher(self):
         settings = {"hooks": {"PreToolUse": [{"matcher": "Read|Bash|Write",

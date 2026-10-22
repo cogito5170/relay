@@ -42,9 +42,10 @@
 
 | 상황 | 동작 | 사용자 할 일 |
 |---|---|---|
-| 대화형 (`relay lean`) | `CLAUDE_CODE_AUTO_COMPACT_WINDOW=80k` → Claude Code 가 스스로 압축하고 계속. 압축 · `/clear` · 새 세션 직후 SessionStart hook 이 현재 task 의 brief/state 를 자동 주입 | 없음 (`/clear` · `/pickup` · `[force]` 불필요) |
+| 대화형 (`relay lean`) | `CLAUDE_CODE_AUTO_COMPACT_WINDOW=80k` → Claude Code 가 스스로 압축하고 계속. 압축 · `/clear` · 새 세션 직후 SessionStart hook 이 표시된 task 의 brief/state(표시 없으면 `.relay/HANDOFF-NEXT.md`)를 자동 주입 | 없음 (`/clear` · `/pickup` · `[force]` 불필요) |
 | 목표가 정해진 작업 | `relay auto "<목표>"` : headless 세션을 자동 순환. 컨텍스트 50k 에서 hook 이 state.md 마무리를 강제, 다음 세션이 이어받음. `STATUS: DONE` 에서 종료 | 목표 한 줄 |
 | 위임 | Claude 가 `relay delegate codex|agy "..."` 로 구현·탐색을 맡기고 마지막 40줄만 받음 (전체는 `.relay/delegate/*.log`) | 없음 |
+| hook 차단 | `prompt_gate` 가 걸리기 직전(`hooks.wrapup_context`, 0 이면 `gate_context` 의 85%)에 PreToolUse hook 이 상태 파일 쓰기 외 모든 도구를 막고 마무리를 받아낸다. 쓸 곳은 `.relay/current`·`RELAY_TASK` 로 표시된 task 의 `state.md`, 표시가 없으면 `.relay/HANDOFF-NEXT.md`. SessionStart 주입도 같은 기준으로 읽는다 | `/clear` → `/pickup` |
 | 오케스트레이션 점검 | `relay check --ping` : claude · codex · agy 설치 · 로그인 · 응답 확인 | 처음 한 번 |
 
 실측 (Haiku): 상태 자동 주입 → 새 세션이 `/pickup` 없이 다음 단계를 답함. `relay auto "calc.add 버그 수정"` → 세션 1개 · 11턴 · 29초 만에 수정 · 테스트 통과 · `STATUS: DONE`.
@@ -100,7 +101,8 @@ review_effort = "medium"
 3. hooks 를 Sonnet / Opus 세션에서도 확인 (Haiku 에서만 확인했다).
 4. ~~`relay why` 의 미분류 분석~~ **완료 (2026-10-13).** thinking 과 포맷·주입 overhead 로 나눠 표시한다 (위 측정값 참고).
 5. 리뷰 턴 수 줄이기 실험: 실제 리뷰가 3턴(파일 열기 포함)이면 가중 약 15.6k 다. 턴당 재과금은 이제 리뷰 system prompt 에 들어가 있고 턴 상한은 `pipeline.review_max_turns` (기본 8) · `relay run --review-max-turns 4` 로 조절한다. **남은 일은 4 턴에서 VERDICT 품질이 유지되는지 실제 작업으로 확인하는 것.**
-6. ~~Gemini explore 의 503 빈도~~ **해결 (2026-10-13).** Gemini API 를 쓰지 않기로 해서 explore 1순위는 `agy --mode plan --print` 이고, 실패하면 `codex exec --sandbox read-only` 로 넘어간다.
+6. `~/.claude/settings.json` 의 `PreToolUse` matcher 가 `Read|Bash|Write` 라 Edit·Grep 은 가드를 통과한다 — `"*"` 로 올릴지 결정. (`SessionStart` 는 2026-10-22 등록 완료: `/clear` 시 `.relay/HANDOFF-NEXT.md` 자동 주입.)
+7. ~~Gemini explore 의 503 빈도~~ **해결 (2026-10-13).** Gemini API 를 쓰지 않기로 해서 explore 1순위는 `agy --mode plan --print` 이고, 실패하면 `codex exec --sandbox read-only` 로 넘어간다.
 
 ## 로컬 환경 메모 (이 맥)
 

@@ -5,7 +5,8 @@ CLAUDE.md 의 규칙은 모델이 지킬 수도, 안 지킬 수도 있다. hook 
 
 - prompt  (UserPromptSubmit): 컨텍스트·요청 수가 한도를 넘으면 메시지를 막고 /handoff → /clear 를 안내.
                               막힌 메시지는 모델에 가지 않는다. `[force]` 를 넣으면 통과.
-- pretool (PreToolUse):       큰 파일 전체 Read, 너무 넓은 줄 범위 읽기, 출력이 큰 명령의 무제한 실행,
+- pretool (PreToolUse):       예산에 닿으면 상태 파일 쓰기만 남기고 막아 인수인계를 받아낸 뒤(auto_wrapup),
+                              큰 파일 전체 Read, 너무 넓은 줄 범위 읽기, 출력이 큰 명령의 무제한 실행,
                               (선택) 큰 Write 를 거부하고
                               짧은 이유만 Claude 에게 돌려준다. 이유 수십 토큰으로 수천 토큰의 출력을 막는다.
 
@@ -39,6 +40,45 @@ RANGES = (
 TOKENS_PER_LINE = 12   # 범위만 보고 거부할 때의 거친 환산 (events 의 avoided 용)
 NARROW_READ_ADVICE = "Grep 으로 위치를 찾고 {limit}줄 이하로 좁혀서 읽으세요."
 
+# 다음 세션이 이어받을 상태의 형식과, task 폴더가 없는 세션(홈 디렉터리 등)에서 그것을 남길 곳.
+WRAPUP_FORMAT = ("첫 줄 `STATUS: DONE` 또는 `STATUS: CONTINUE`, 그 뒤 "
+                 "## Done / ## Decisions / ## Next / ## Files (250단어 이내)")
+HANDOFF_FALLBACK = "HANDOFF-NEXT.md"
+# 대화형 마무리를 거는 지점: gate_context 에 대한 비율. 숫자 차단 직전이어야 하고,
+# 그보다 낮으면 아직 여유 있는 세션의 도구 호출까지 막는다.
+WRAPUP_GATE_RATIO = 0.85
+
+
+def handoff_fallback(root: Path) -> Path:
+    return root / ".relay" / HANDOFF_FALLBACK
+
+
+def _marked_task(root: Path) -> Path | None:
+    """대화형 마무리가 건드려도 되는 task.
+
+    auto.current_task 는 표시가 없으면 '가장 최근 task' 로 넘어가므로, 관계없는 옛 task 의
+    state.md 를 덮어쓸 수 있다. 지금 이 작업이라는 표시(.relay/current · RELAY_TASK)가 있을 때만 쓴다.
+    """
+    if os.environ.get("RELAY_TASK") or (root / ".relay" / "current").is_file():
+        return auto.current_task(root)
+    return None
+
+
+def wrapup_target(root: Path) -> Path:
+    """상태를 남길 파일: 표시된 task 의 state.md, 표시가 없으면 .relay/HANDOFF-NEXT.md."""
+    task = _marked_task(root)
+    return auto.state_path(task) if task else handoff_fallback(root)
+
+
+def handoff_hint(root: Path) -> str:
+    """차단 메시지에 붙이는 인수인계 안내. task 가 없는 세션에도 넘길 곳이 있어야 한다."""
+    task = _marked_task(root)
+    if task:
+        return f"→ /handoff {task.name} → /clear → /pickup {task.name}"
+    return (f"→ 먼저 다음 세션에 넘길 상태를 남기세요: /handoff (또는 {handoff_fallback(root)} 에 직접)\n"
+            f"  형식: {WRAPUP_FORMAT}\n"
+            f"  그다음 /clear → /pickup (새 세션이 이 파일을 자동으로 읽습니다)")
+
 
 def _log(root: Path, rule: str, detail: str, avoided: int) -> None:
     events.append(root, client="hook", profile="-", tool=rule, task=detail[:80], ok=False, tokens_out=0,
@@ -68,7 +108,8 @@ def supervisor_gate(data: dict, conf: dict, ctx: int, session: str) -> dict | No
         return None
     if cached.get("verdict") == "CLEAR":
         _log(root, "gate:supervisor", f"CLEAR {cached.get('reason', '')}"[:80], ctx)
-        return {"decision": "block", "reason": f"{notice}\n(그래도 보내려면 메시지에 {FORCE} 를 넣으세요)"}
+        return {"decision": "block", "reason": (f"{notice}\n{handoff_hint(root)}\n"
+                                                f"(그래도 보내려면 메시지에 {FORCE} 를 넣으세요)")}
     return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": notice}}
 
 
@@ -86,10 +127,11 @@ def prompt_gate(data: dict, conf: dict) -> dict | None:
     h = conf["hooks"]
     if ctx < h["gate_context"] and totals.requests < h["gate_requests"]:
         return supervisor_gate(data, conf, ctx, path.stem)
-    _log(Path(data.get("cwd") or "."), "gate:prompt", f"ctx={ctx} req={totals.requests}", ctx)
+    root = cfg.find_root(Path(data.get("cwd") or "."))
+    _log(root, "gate:prompt", f"ctx={ctx} req={totals.requests}", ctx)
     return {"decision": "block", "reason": (
         f"relay: 컨텍스트 {human(ctx)} · 요청 {totals.requests}회. 계속하면 이후 요청마다 {human(ctx)} 이상을 다시 읽습니다.\n"
-        f"→ /handoff <task-id> → /clear → /pickup <task-id>\n"
+        f"{handoff_hint(root)}\n"
         f"(그래도 보내려면 메시지에 {FORCE} 를 넣으세요)")}
 
 
@@ -186,45 +228,90 @@ GUARDS = {"Read": ("read_guard", read_guard), "Bash": ("bash_guard", bash_guard)
           "Write": ("write_guard", write_guard)}
 
 
+def _wrapup_limit(conf: dict) -> int:
+    """마무리를 강제할 컨텍스트. 음수면 끈다.
+
+    relay auto 안에서는 auto.handoff_context, 대화형에서는 hooks.wrapup_context 이고
+    후자가 0 이면 gate_context 의 85% 를 쓴다 — 숫자 차단 바로 앞에서만 걸려야 한다.
+    budget.max_context 는 statusline 경고용이라 대화형 세션이 정상적으로 넘기므로 기준으로 쓰지 않는다.
+    """
+    if os.environ.get("RELAY_AUTO") == "1":
+        return int(os.environ.get("RELAY_HANDOFF_CONTEXT") or conf["auto"]["handoff_context"])
+    limit = int(conf["hooks"].get("wrapup_context") or 0)
+    return limit if limit else int(conf["hooks"]["gate_context"] * WRAPUP_GATE_RATIO)
+
+
+def _writes_wrapup(data: dict, target: Path, cwd: Path) -> bool:
+    """이 도구 호출이 상태 파일을 쓰는 것인가. 마무리 중에는 이것만 통과시킨다."""
+    tool_input = data.get("tool_input") or {}
+    if data.get("tool_name") in ("Write", "Edit"):
+        path = Path(tool_input.get("file_path") or "")
+        path = path if path.is_absolute() else cwd / path
+        try:
+            return path.resolve() == target.resolve()
+        except OSError:
+            return False
+    if data.get("tool_name") == "Bash":
+        return target.name in (tool_input.get("command") or "")   # heredoc 으로 쓰는 세션도 있다
+    return False
+
+
 def auto_wrapup(data: dict, conf: dict) -> dict | None:
-    """relay auto 청크 안에서만: 컨텍스트가 예산을 넘으면 state.md 쓰기 외 모든 도구를 막고 마무리를 지시."""
-    if os.environ.get("RELAY_AUTO") != "1":
-        return None
+    """컨텍스트가 예산에 닿으면 상태 파일 쓰기 외 모든 도구를 막고 마무리를 지시한다.
+
+    relay auto 뿐 아니라 대화형 세션에도 적용한다. prompt_gate 는 메시지를 모델에 보내지 않고 막으므로,
+    차단 시점에 상태가 안 남아 있으면 다음 세션에 넘길 프롬프트가 없다. 그 전에 여기서 상태를 받아 둔다.
+    """
     transcript = data.get("transcript_path")
     if not transcript or not Path(transcript).is_file():
         return None
+    limit = _wrapup_limit(conf)
+    if limit < 0:
+        return None
     ctx, _ = last_context(Path(transcript))
-    if ctx < int(os.environ.get("RELAY_HANDOFF_CONTEXT") or conf["auto"]["handoff_context"]):
+    if ctx < limit:
         return None
     cwd = Path(data.get("cwd") or ".")
-    task = auto.current_task(cfg.find_root(cwd))
-    if not task:
+    root = cfg.find_root(cwd)
+    in_auto = os.environ.get("RELAY_AUTO") == "1"
+    task = auto.current_task(root) if in_auto else _marked_task(root)
+    if in_auto and not task:
+        return None          # auto 는 task 폴더가 전제다
+    target = auto.state_path(task) if task else handoff_fallback(root)
+    if _writes_wrapup(data, target, cwd):
         return None
-    target = auto.state_path(task)
-    path = Path((data.get("tool_input") or {}).get("file_path") or "")
-    path = path if path.is_absolute() else cwd / path
-    if data.get("tool_name") in ("Write", "Edit") and path.resolve() == target.resolve():
-        return None
-    _log(cfg.find_root(cwd), "auto:wrapup", f"ctx={ctx}", 0)
+    _log(root, "auto:wrapup" if in_auto else "hook:wrapup", f"ctx={ctx}", 0)
+    tail = "" if in_auto else " 그다음 사용자가 /clear 하고 /pickup 으로 이어받습니다."
     return _deny(f"컨텍스트 {human(ctx)} 로 이 세션의 예산에 도달했습니다. 다른 작업을 멈추고 {target} 를 "
-                 f"`STATUS: DONE` 또는 `STATUS: CONTINUE` 첫 줄 + ## Done / ## Decisions / ## Next / ## Files 로 덮어쓴 뒤 "
-                 f"한 줄로 턴을 끝내세요. 다음 세션이 이어받습니다.")
+                 f"{WRAPUP_FORMAT} 로 덮어쓴 뒤 한 줄로 턴을 끝내세요. 다음 세션이 이어받습니다.{tail}")
 
 
 def session_start(data: dict, conf: dict) -> dict | None:
-    """새 세션 · /clear · 자동 압축 직후 현재 task 의 brief/state 를 컨텍스트에 자동으로 넣는다 (/pickup 불필요)."""
+    """새 세션 · /clear · 자동 압축 직후 현재 task 의 brief/state 를 컨텍스트에 자동으로 넣는다 (/pickup 불필요).
+
+    읽는 곳은 마무리가 쓰는 곳(_marked_task)과 같아야 한다. auto.current_task 의 '가장 최근 task'
+    폴백을 쓰면 표시 없는 저장소에서 방금 남긴 HANDOFF-NEXT.md 대신 관계없는 옛 task 가 들어온다.
+    """
     source = data.get("source") or "startup"
     if source not in conf["hooks"]["session_inject"]:
         return None
-    task = auto.current_task(cfg.find_root(Path(data.get("cwd") or ".")))
-    if not task:
-        return None
-    parts = [f"## {name}\n{(task / name).read_text(encoding='utf-8')[:3000].strip()}"
-             for name in ("brief.md", "state.md") if (task / name).is_file()]
+    root = cfg.find_root(Path(data.get("cwd") or "."))
+    task = _marked_task(root)
+    if task:
+        parts = [f"## {name}\n{(task / name).read_text(encoding='utf-8')[:3000].strip()}"
+                 for name in ("brief.md", "state.md") if (task / name).is_file()]
+        label, target = f"현재 작업 {task.name}", f"{task.relative_to(task.parents[2]).as_posix()}/state.md"
+    else:
+        # task 폴더가 없는 세션(홈 디렉터리 등)도 마무리 파일로 이어받는다.
+        fallback = handoff_fallback(root)
+        if not fallback.is_file():
+            return None
+        parts = [f"## {fallback.name}\n{fallback.read_text(encoding='utf-8')[:3000].strip()}"]
+        label, target = "이전 세션 인수인계", f".relay/{HANDOFF_FALLBACK}"
     if not parts:
         return None
-    text = (f"[relay] 현재 작업 {task.name} ({source}). 아래 상태에서 이어서 진행하세요. "
-            f"작업 단위가 끝나면 {task.relative_to(task.parents[2]).as_posix()}/state.md 를 갱신하세요.\n\n" + "\n\n".join(parts))
+    text = (f"[relay] {label} ({source}). 아래 상태에서 이어서 진행하세요. "
+            f"작업 단위가 끝나면 {target} 를 갱신하세요.\n\n" + "\n\n".join(parts))
     return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}
 
 
