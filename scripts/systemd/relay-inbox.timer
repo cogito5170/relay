@@ -1,0 +1,11 @@
+# ~/.config/systemd/user/relay-inbox.timer — 30초마다 git fetch 로 새 요청을 확인한다.
+[Unit]
+Description=Poll the relay inbox
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=30s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
