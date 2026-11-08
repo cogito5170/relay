@@ -11,8 +11,8 @@ from pathlib import Path
 
 from relay import config as cfg
 from relay import pack as packmod
-from relay import (ask as askmod, attribution, auto, cloud_job, doctor, events, hooks, pipeline, mcp_server, router, statusline,
-                   supervisor, tasks, usage)
+from relay import (archive, ask as askmod, attribution, auto, cloud_job, doctor, events, hooks, imagegen, inbox,
+                   pipeline, mcp_server, router, statusline, supervisor, tasks, usage)
 from relay.tokens import estimate, human
 
 BASELINE = Path.home() / ".relay" / "baseline.json"
@@ -261,6 +261,57 @@ def cmd_why(args) -> int:
     return 0
 
 
+def cmd_archive(args) -> int:
+    root = cfg.find_root()
+    ar = archive.Archive(root)
+    if args.stats:
+        st = ar.stats()
+        print(f"기록 {st['records']}개 (active {st['active']}) · 원문 ~{human(st['tokens'])} tok · {st['by_kind']}")
+        if st["broken_lines"]:
+            print(f"(색인에 깨진 줄 {st['broken_lines']}개 — 건너뜀)")
+        return 0
+    if not (root / ".relay").is_dir():
+        print("`.relay/` 가 없습니다. 먼저 `relay init`.", file=sys.stderr)
+        return 1
+    path = Path(args.transcript) if args.transcript else attribution.find_transcript(args.session)
+    info = archive.archive_transcript(root, path, cfg.load(root))
+    print(f"세션 {info['session'][:8]}: 턴 {info['turns']}개 → 기록 {info['records']}개 + 요약 {info['summary_id']} "
+          f"(새로 적은 줄 {info['added']}개, 원문 ~{human(info['tokens_archived'])} tok)")
+    print("이 대화는 /clear 해도 `relay recall \"낱말\"` 로 되찾을 수 있습니다.")
+    return 0
+
+
+def cmd_recall(args) -> int:
+    root = cfg.find_root()
+    conf = cfg.load(root)
+    ar = archive.Archive(root)
+    if args.supersede:
+        row = ar.supersede(args.supersede[0], args.supersede[1], why=args.why or "")
+        print(f"{', '.join(row['supersedes'])} → superseded (by {row['id']})")
+        return 0
+    if args.retract:
+        print(f"{ar.retract(args.retract, why=args.why or '')['id']} → retracted")
+        return 0
+    if args.open:
+        lines = None
+        if args.lines:
+            a, _, b = args.lines.partition("-")
+            lines = (int(a), int(b or a))
+        print(ar.open(args.open, query=args.query or " ".join(args.words), lines=lines,
+                      budget=args.budget or conf["archive"]["open_budget"]))
+        return 0
+    query = " ".join(args.words)
+    hits = ar.search(query, limit=args.limit, min_score=args.min_score, include_inactive=args.all)
+    if not hits:
+        print(f"'{query}' 와 겹치는 보관 기록이 없습니다.")
+        return 3
+    corr = ar.corrected_by()
+    for score, r in hits:
+        print(f"{score:>3} {ar.line(r, corr)}")
+    print("원문 일부: relay recall --open <id> --query \"낱말\"  (또는 --lines A-B)")
+    return 0
+
+
 def cmd_watch(args) -> int:
     """Claude 세션을 감시 모델(codex → agy)에게 판정받아 `.relay/supervisor/<session>.json` 에 캐시한다."""
     root = cfg.find_root()
@@ -399,6 +450,46 @@ def cmd_advise(args) -> int:
     print(text)
     print(f"\n[{report['status']}] → {(task / f'out-{args.agent}.md').relative_to(root)}")
     return rc
+
+
+def cmd_image(args) -> int:
+    root = cfg.find_root()
+    task = tasks.resolve(root, args.task)
+    spec_path = task / imagegen.SPEC_FILE
+    if args.spec:
+        spec = imagegen.load_spec(Path(args.spec))
+        spec_path.write_text(json.dumps(spec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if not spec_path.is_file():
+        raise FileNotFoundError(f"{spec_path.relative_to(root)} 가 없습니다 (--spec 으로 지정)")
+    if args.print_prompt:
+        print(imagegen.build_prompt(imagegen.load_spec(spec_path)))
+        return 0
+    print(f"relay image {task.name} — 스펙 → Codex(상세 프롬프트 + 생성)")
+    rc, report = imagegen.generate(task, cfg.load(root))
+    if rc == 0:
+        print(f"[ok] → {(task / report['image']).relative_to(root)}  ({report['seconds']}s)")
+    else:
+        print(f"[failed] {report.get('error', '')} → {(task / imagegen.REPORT_FILE).relative_to(root)}")
+    return rc
+
+
+def cmd_request(args) -> int:
+    """VM 인박스 워커(relay inbox)가 처리할 요청을 task 폴더에 쓴다. 커밋·푸시는 호출한 쪽이 한다."""
+    root = cfg.find_root()
+    task = tasks.resolve(root, args.task)
+    request = {"action": args.action, "id": time.strftime("%Y%m%dT%H%M%S")}
+    if args.action == "advise":
+        request["agent"] = "agy"
+    if args.action == "delegate":
+        if not args.agent or not args.instruction:
+            raise ValueError("delegate 는 --agent 와 --instruction 이 필요합니다")
+        request.update(agent=args.agent, instruction=args.instruction)
+    path = task / "request.json"
+    path.write_text(json.dumps(request, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    rel = path.relative_to(root)
+    print(f"{rel} 작성. 다음: git add {rel} && git commit -m 'relay request' && git push")
+    print("VM 워커가 처리하면 같은 브랜치에 response.json 과 결과가 커밋된다 (git pull 로 확인).")
+    return 0
 
 
 def cmd_check(args) -> int:
@@ -542,8 +633,28 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_doctor)
 
     s = sub.add_parser("hook", help="Claude Code hook 진입점 (stdin JSON)")
-    s.add_argument("event", choices=["prompt", "pretool", "session"])
+    s.add_argument("event", choices=["prompt", "pretool", "session", "precompact"])
     s.set_defaults(func=lambda a: hooks.main(a.event))
+
+    s = sub.add_parser("archive", help="세션 대화를 .relay/archive 로 보관 (원문 + 깃발 색인)")
+    s.add_argument("session", nargs="?", help="세션 id 접두어 (기본: 현재 프로젝트의 최근 세션)")
+    s.add_argument("--transcript", help="transcript jsonl 경로를 직접 지정")
+    s.add_argument("--stats", action="store_true", help="보관소 현황만")
+    s.set_defaults(func=cmd_archive)
+
+    s = sub.add_parser("recall", help="보관된 대화를 색인으로 찾고, 원문은 필요한 줄만")
+    s.add_argument("words", nargs="*", help="찾을 낱말")
+    s.add_argument("--open", metavar="ID", help="이 기록의 원문 일부 (질의 낱말 주변 줄)")
+    s.add_argument("--query", help="--open 에서 찾을 낱말 (기본: words)")
+    s.add_argument("--lines", help="--open 에서 줄 범위 A-B")
+    s.add_argument("--budget", type=int, help="--open 발췌 최대 토큰")
+    s.add_argument("--limit", type=int, default=5)
+    s.add_argument("--min-score", type=int, default=1)
+    s.add_argument("--all", action="store_true", help="superseded · retracted 도 보기")
+    s.add_argument("--supersede", nargs=2, metavar=("OLD", "NEW"), help="NEW(사용자 말·도구 출력)가 OLD 를 대체")
+    s.add_argument("--retract", metavar="ID", help="틀린 것으로 표시 (지우지 않음)")
+    s.add_argument("--why", help="--supersede / --retract 의 사유")
+    s.set_defaults(func=cmd_recall)
 
     s = sub.add_parser("watch", help="Claude 세션을 감시 모델(codex → agy)에게 판정받기 (Claude 토큰 0)")
     s.add_argument("session", nargs="?", help="세션 id 접두어 (기본: 현재 프로젝트의 최근 세션)")
@@ -586,6 +697,23 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("task", nargs="?")
     s.add_argument("--agent", required=True, choices=["claude", "agy"])
     s.set_defaults(func=cmd_advise)
+
+    s = sub.add_parser("image", help="의미 스펙(image-spec.json) → Codex 가 상세 프롬프트를 쓰고 이미지 생성")
+    s.add_argument("task", nargs="?")
+    s.add_argument("--spec", help="스펙 JSON 경로 (task 폴더의 image-spec.json 으로 복사)")
+    s.add_argument("--print-prompt", action="store_true", help="Codex 에 보낼 프롬프트만 출력")
+    s.set_defaults(func=cmd_image)
+
+    s = sub.add_parser("request", help="VM 인박스 워커에 codex/agy 작업 요청 (request.json 작성)")
+    s.add_argument("task")
+    s.add_argument("action", choices=["image", "advise", "delegate"])
+    s.add_argument("--agent", choices=["codex", "agy"], help="delegate 대상")
+    s.add_argument("--instruction", help="delegate 지시문")
+    s.set_defaults(func=cmd_request)
+
+    s = sub.add_parser("inbox", help="VM 워커: git 으로 들어온 request.json 을 codex/agy 로 처리하고 결과 푸시 (1회)")
+    inbox.add_arguments(s)
+    s.set_defaults(func=inbox.run)
 
     s = sub.add_parser("check", help="claude · codex · agy 설치/응답 진단")
     s.add_argument("--ping", action="store_true", help="각 도구에 짧은 요청 1회 (토큰 소량 사용)")

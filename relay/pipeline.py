@@ -205,8 +205,8 @@ NO_SHELL_NOTE = ("Do not run shell commands: this run is headless and a command 
                  "The pipeline runs the test command itself afterwards.")
 
 # 한도 소진은 보통 종료 코드 0 + 안내 문구로 온다 (claude 의 "usage limit reached",
-# agy 의 "You have exhausted your quota on this model."). 그래야 다음 후보로 넘길 수 있다.
-QUOTA_MARKERS = ("exhausted your quota", "usage limit reached", "quota exceeded", "resource_exhausted",
+# agy 의 "You have exhausted your quota on this model.", codex 의 "You've hit your usage limit"). 그래야 다음 후보로 넘길 수 있다.
+QUOTA_MARKERS = ("exhausted your quota", "usage limit reached", "hit your usage limit", "quota exceeded", "resource_exhausted",
                  "rate limit exceeded", "429 too many requests")
 
 
