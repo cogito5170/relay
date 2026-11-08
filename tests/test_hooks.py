@@ -37,7 +37,8 @@ class HooksTest(unittest.TestCase):
         return self.run_hook("pretool", {"tool_name": tool, "tool_input": tool_input})
 
     def test_prompt_gate(self):
-        big = transcript(self.dir / "big.jsonl", 150_000)
+        over = config.DEFAULTS["hooks"]["gate_context"] + 50_000   # 설정이 바뀌어도 따라가게 유도한다
+        big = transcript(self.dir / "big.jsonl", over)
         small = transcript(self.dir / "small.jsonl", 20_000)
         blocked = self.run_hook("prompt", {"prompt": "계속해", "transcript_path": str(big)})
         self.assertEqual(blocked["decision"], "block")

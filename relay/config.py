@@ -17,12 +17,16 @@ DEFAULTS = {
     # relay hook (Claude Code hooks) — relay init --hooks 로 설치
     "hooks": {
         "enabled": ["prompt_gate", "read_guard", "bash_guard", "write_guard"],  # Claude Pro 기준
-        "gate_context": 100_000,  # 최후 방어선. 보통은 lean.compact_window 에서 자동 압축이 먼저 일어난다
+        "gate_context": 170_000,  # 최후 방어선. 보통은 lean.compact_window 에서 자동 압축이 먼저 일어난다.
+        # 반드시 압축 지점(compact_window 의 약 85%) 보다 위에 둔다. 아래에 두면 차단이 먼저 걸려
+        # 자동 압축이 한 번도 돌지 못하고 사용자가 매번 /clear 해야 한다.
         "gate_requests": 100,     # 최후 방어선
         # 대화형 세션에서 PreToolUse hook 이 상태 파일 마무리를 강제할 컨텍스트.
         # 0 = gate_context 의 85% (숫자 차단 직전), 음수 = 끈다.
         "wrapup_context": 0,
-        "session_inject": ["startup", "clear", "compact"],  # 이때 brief/state 자동 주입
+        "session_inject": ["startup", "clear"],  # 이때 brief/state 자동 주입.
+        # compact 는 일부러 뺐다. 압축 직후에도 주입하면 압축이 비운 공간을 그 자리에서 다시 채워,
+        # 압축 주기가 갈수록 짧아진다 (실측: 회수 698 토큰, 간격 3~5분).
         "read_max_lines": 400,     # 이보다 긴 파일은 offset/limit 없이 Read 금지
         "read_max_range": 120,     # 한 번에 읽을 수 있는 최대 줄 수 (Read limit/offset, sed -n 'A,Bp', head/tail -n N, awk NR 범위)
         "grep_max_context": 20,    # grep -A/-B/-C 의 최대 맥락 줄 수 (일치마다 붙으므로 작게 둔다)
@@ -86,8 +90,18 @@ DEFAULTS = {
     },
     # relay lean — 도구를 줄인 대화형 Claude (실측 base 35.1k → 7.9k)
     "lean": {"tools": "Read,Edit,Write,Bash,Grep,Glob", "strict_mcp": True, "effort": "",
-             # Claude Code 가 이 크기에서 스스로 대화를 압축하고 계속한다 → 사용자가 /clear 할 필요 없음
-             "compact_window": "80k"},
+             # 빈 값 = CLAUDE_CODE_AUTO_COMPACT_WINDOW 를 주입하지 않는다. 그러면 Claude Code 가
+             # 자기 기본값을 쓴다 (Opus 5 1M 에서는 auto = 모델 컨텍스트 창 전체인 1,000,000).
+             # 값을 넣으면 Claude Code 가 그 크기에서 스스로 대화를 압축하고 계속하므로
+             # 사용자가 /clear 할 필요가 없다. 단, 반드시 hooks.gate_context 보다 아래로 둘 것.
+             #
+             # 값은 토큰 수 정수로 쓴다 (예: 160000 또는 "160k" 또는 160 — 뒤 두 개는 relay 가
+             # 160000 으로 풀어서 넣는다). Claude Code 자체는 이 환경변수를 parseInt 로 읽기
+             # 때문에 "160k" 를 그대로 넘기면 160 으로 해석된 뒤 하한선 100000 으로 올라간다.
+             # k/m 접미사는 앱 안의 /autocompact 명령에서만 통한다. 유효 범위는
+             # 100000~1000000 이고 relay 가 이 범위로 맞춰서 넣는다. 실제 압축 시점은
+             # min(이 값, 모델 최대 컨텍스트) 에서 출력 예약분 20000 을 뺀 지점이다.
+             "compact_window": ""},
     # relay ask — PDF 드래그 질문. 쉬운 설명은 agy → codex, 깊은 질문만 Claude 1턴 (도구 없음).
     "ask": {
         "easy": [["agy", "--mode", "plan", "--print", "{no_shell}\n\n{prompt}"],

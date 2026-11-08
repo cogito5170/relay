@@ -358,7 +358,7 @@ def cmd_lean(args) -> int:
     extra = args.extra[1:] if args.extra[:1] == ["--"] else args.extra
     argv = pipeline.lean_argv(cfg.load(root), root, extra)
     if args.print:
-        window = cfg.load(root)["lean"].get("compact_window")
+        window = pipeline.compact_window_env(cfg.load(root)["lean"].get("compact_window"))
         print((f"CLAUDE_CODE_AUTO_COMPACT_WINDOW={window} " if window else "") + " ".join(argv))
         return 0
     return pipeline.exec_lean(cfg.load(root), root, extra)

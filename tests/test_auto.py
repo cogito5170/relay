@@ -145,7 +145,10 @@ class AutoHooksTest(unittest.TestCase):
         """숫자 차단(prompt_gate)은 메시지를 모델에 보내지 않으므로, 그 전에 상태를 받아 둬야 한다."""
         big = self.root / "big.jsonl"
         big.write_text(json.dumps({"type": "assistant", "requestId": "r", "message": {"id": "m", "usage": {
-            "input_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 90_000}}}) + "\n")
+            "input_tokens": 0, "cache_creation_input_tokens": 0,
+            # 마무리 선(gate_context 의 85%) 바로 위. 설정이 바뀌어도 따라가게 유도한다.
+            "cache_read_input_tokens": int(
+                config.DEFAULTS["hooks"]["gate_context"] * hooks.WRAPUP_GATE_RATIO) + 1_000}}}) + "\n")
         call = {"transcript_path": str(big), "tool_name": "Grep", "tool_input": {"pattern": "x"}}
         self.assertIsNone(self.hook("pretool", {**call, "transcript_path": str(self.transcript)}))
         fallback = hooks.handoff_fallback(self.root)

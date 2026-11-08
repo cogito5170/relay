@@ -122,6 +122,24 @@ class PipelineTest(unittest.TestCase):
         self.assertIn(str(self.root / ".mcp.json"), argv)
         self.assertEqual(argv[-2:], ["--model", "sonnet"])
 
+    def test_compact_window_env(self):
+        # 빈 값은 주입하지 않는다 (Claude Code 가 자기 기본값 auto 를 쓴다)
+        self.assertEqual(pipeline.compact_window_env(""), "")
+        self.assertEqual(pipeline.compact_window_env(None), "")
+        # 접미사와 단축 표기를 정수로 풀어서 넘긴다 — env 경로는 parseInt 라 접미사를 못 읽는다
+        self.assertEqual(pipeline.compact_window_env("160k"), "160000")
+        self.assertEqual(pipeline.compact_window_env("1m"), "1000000")
+        self.assertEqual(pipeline.compact_window_env(160), "160000")
+        self.assertEqual(pipeline.compact_window_env("160000"), "160000")
+        # Claude Code 가 받는 범위 100000~1000000 으로 맞춘다
+        self.assertEqual(pipeline.compact_window_env("80k"), "100000")
+        self.assertEqual(pipeline.compact_window_env("2m"), "1000000")
+        with self.assertRaises(RuntimeError):
+            pipeline.compact_window_env("many")
+
+    def test_lean_default_window_is_unset(self):
+        self.assertEqual(config.DEFAULTS["lean"]["compact_window"], "")
+
     def test_default_review_runner_is_lean(self):
         review = config.DEFAULTS["runners"]["review"][0]
         self.assertIn("--tools", review)

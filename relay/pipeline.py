@@ -423,11 +423,43 @@ def lean_argv(conf: dict, root: Path, extra: list[str]) -> list[str]:
     return argv + extra
 
 
+AUTO_COMPACT_MIN = 100_000
+AUTO_COMPACT_MAX = 1_000_000
+
+
+def compact_window_env(value) -> str:
+    """lean.compact_window 설정값을 CLAUDE_CODE_AUTO_COMPACT_WINDOW 가 실제로 읽는 형태로 바꾼다.
+
+    Claude Code 는 이 환경변수를 parseInt 로 읽기 때문에 "160k" 를 넘기면 160 으로 해석한 뒤
+    하한선인 100000 으로 올려버린다. k/m 접미사는 앱 안의 /autocompact 명령에서만 통한다.
+    그래서 접미사와 100~1000 단축 표기를 여기서 미리 풀고, 결과를 Claude Code 가 받아들이는
+    100000~1000000 범위로 맞춘 정수 문자열로 돌려준다. 빈 값은 빈 문자열 그대로 (주입 안 함).
+    """
+    if not value:
+        return ""
+    text = str(value).strip().lower()
+    if not text:
+        return ""
+    scale = 1
+    if text.endswith("m"):
+        scale, text = 1_000_000, text[:-1]
+    elif text.endswith("k"):
+        scale, text = 1_000, text[:-1]
+    try:
+        tokens = round(float(text) * scale)
+    except ValueError:
+        raise RuntimeError(f"lean.compact_window 값을 숫자로 읽을 수 없습니다: {value!r}")
+    if scale == 1 and 100 <= tokens <= 1000:
+        tokens *= 1000  # Claude Code 와 같은 단축 표기: 160 은 160000 을 뜻한다
+    return str(min(AUTO_COMPACT_MAX, max(AUTO_COMPACT_MIN, tokens)))
+
+
 def exec_lean(conf: dict, root: Path, extra: list[str]) -> int:
     argv = lean_argv(conf, root, extra)
     if not shutil.which(argv[0]):
         raise RuntimeError("claude CLI 가 설치되어 있지 않습니다")
-    if conf["lean"].get("compact_window"):
-        os.environ.setdefault("CLAUDE_CODE_AUTO_COMPACT_WINDOW", str(conf["lean"]["compact_window"]))
+    window = compact_window_env(conf["lean"].get("compact_window"))
+    if window:
+        os.environ.setdefault("CLAUDE_CODE_AUTO_COMPACT_WINDOW", window)
     os.execvp(argv[0], argv)
     return 0  # pragma: no cover

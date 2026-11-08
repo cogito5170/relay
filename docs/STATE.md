@@ -55,7 +55,7 @@
     - `auto_wrapup` 을 `relay auto` 전용에서 대화형 세션까지 확장했다. 숫자 차단 직전(`hooks.wrapup_context`, 0 이면 `gate_context` 의 85%)에서 상태 파일 쓰기 외 모든 도구를 막아 인수인계를 받아낸다. 음수면 끈다.
     - 대화형 마무리는 `.relay/current` 나 `RELAY_TASK` 로 **지금 이 작업이라고 표시된** task 만 건드린다. `auto.current_task` 의 "가장 최근 task" 폴백을 그대로 쓰면 관계없는 옛 task 의 `state.md` 를 덮어쓴다 (실제로 이 세션에서 `003-platform-devops-final-16week-plan` 을 지목했다). 표시가 없으면 `.relay/HANDOFF-NEXT.md` 로 쓴다.
     - 차단 메시지(`prompt_gate` · 감시자 `CLEAR`)에 상태 형식과 쓸 파일 경로를 직접 넣었다. 전에는 `/handoff <id>` 만 안내해, task 가 없는 세션에서는 실행 불가능한 안내였다.
-    - `session_start` 는 마무리가 쓰는 곳과 같은 기준(`_marked_task`)으로 읽는다: 표시된 task 의 `brief.md`+`state.md`, 표시가 없으면 `.relay/HANDOFF-NEXT.md`, 그 파일도 없으면 아무것도 주입하지 않는다 (2026-10-22 변경 — 전에는 `auto.current_task` 를 써서 표시 없는 저장소에 '가장 최근 task' 가 들어왔다). 2026-10-22 에 `~/.claude/settings.json` 에 `SessionStart`(`relay hook session`) 를 등록해, 홈 세션도 `/clear` · 새 세션 · 압축 직후 이 파일을 자동으로 받는다 (`/pickup` 불필요). `source=resume` 은 `session_inject` 에 없어 주입하지 않는다.
+    - `session_start` 는 마무리가 쓰는 곳과 같은 기준(`_marked_task`)으로 읽는다: 표시된 task 의 `brief.md`+`state.md`, 표시가 없으면 `.relay/HANDOFF-NEXT.md`, 그 파일도 없으면 아무것도 주입하지 않는다 (2026-10-22 변경 — 전에는 `auto.current_task` 를 써서 표시 없는 저장소에 '가장 최근 task' 가 들어왔다). 2026-10-22 에 `~/.claude/settings.json` 에 `SessionStart`(`relay hook session`) 를 등록해, 홈 세션도 `/clear` · 새 세션에서 이 파일을 자동으로 받는다 (`/pickup` 불필요). `source=resume` 과 `source=compact` 는 `session_inject` 에 없어 주입하지 않는다 — 압축 직후 주입은 2026-10-22 에 뺐다. 압축이 비운 공간을 그 자리에서 다시 채워 압축 주기가 3~5분까지 짧아졌고, 한 번은 압축이 698 토큰밖에 회수하지 못했다.
     - 첫 임계값을 `budget.max_context`(effiency 60k) 로 뒀더니 작업 중인 세션의 Bash·Read 를 61.4k 에서 바로 막았다. `budget.max_context` 는 상태줄 경고용이라 대화형 세션이 정상적으로 넘기는 값이어서 기준으로 쓸 수 없다. 테스트 116개 통과.
 
 ## 다음 단계
