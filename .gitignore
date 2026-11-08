@@ -26,3 +26,6 @@ crash.log
 .agent/
 AGENTS.md
 CLAUDE.md
+
+# macOS Finder
+.DS_Store
